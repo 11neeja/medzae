@@ -41,3 +41,18 @@ export async function persistFile(file, opts = {}) {
 export function isRemoteUrl(url) {
   return typeof url === 'string' && /^https?:\/\//i.test(url)
 }
+
+/**
+ * Delete a locally stored upload. Accepts either a bare filename or a
+ * /uploads/... path; remote (Cloudinary) URLs and missing files are no-ops.
+ * @param {string} storedPath - Document.filePath as saved in the database
+ */
+export function removeUploadedFile(storedPath) {
+  if (!storedPath || isRemoteUrl(storedPath)) return
+  const fullPath = path.join(uploadsDir, path.basename(storedPath))
+  try {
+    if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath)
+  } catch (error) {
+    console.error(`⚠️ Could not remove upload "${storedPath}":`, error.message)
+  }
+}

@@ -50,6 +50,10 @@ model User {
   threads              Thread[]
   threadReplies        ThreadReply[]
   threadVotes          ThreadVote[]
+
+  // Notebook folders this user has shared with others, and folders shared with them.
+  folderSharesOwned    FolderShare[]      @relation("FolderShareOwner")
+  folderSharesReceived FolderShare[]      @relation("FolderShareRecipient")
 }
 
 model Conversation {
@@ -176,15 +180,39 @@ model NoteBlock {
   note   Note   @relation(fields: [noteId], references: [id], onDelete: Cascade)
 }
 
+// A notebook folder (Note.subject string) shared by its owner with another user.
+// Folders aren't real rows, so a share is keyed on owner + folder-name + recipient.
+// Grants the recipient access to every note/task/document owned by `ownerId`
+// whose subject == `subject`. permission: "view" (read-only) or "edit".
+model FolderShare {
+  id           String   @id @default(cuid())
+  ownerId      String
+  subject      String
+  sharedWithId String
+  permission   String   @default("view")
+  createdAt    DateTime @default(now())
+
+  owner      User @relation("FolderShareOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  sharedWith User @relation("FolderShareRecipient", fields: [sharedWithId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, subject, sharedWithId])
+  @@index([sharedWithId])
+}
+
 model Task {
   id        String   @id @default(cuid())
   title     String
   completed Boolean  @default(false)
+  // Notebook folder this task belongs to (matches Note.subject).
+  // Null = legacy/unfiled task, shown only in the notebook's "All" view.
+  subject   String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   userId String
   user   User   @relation(fields: [userId], references: [id])
+
+  @@index([userId, subject])
 }
 
 model Event {
@@ -214,6 +242,9 @@ model Document {
   name          String
   type          String   @default("other")
   source        String   @default("assistant")
+  // Notebook folder this document belongs to (matches Note.subject).
+  // Always null for assistant/chat uploads, which are not folder-scoped.
+  subject       String?
   filePath      String
   mimeType      String
   size          Int
@@ -223,6 +254,8 @@ model Document {
 
   userId String
   user   User   @relation(fields: [userId], references: [id])
+
+  @@index([userId, source, subject])
 }
 
 model AiChatMessage {

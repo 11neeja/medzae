@@ -1,14 +1,14 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import {
   FolderOpen, Folder, FileText, Search, Trash2, CheckSquare, BookOpen,
   Upload, Eye, X, Inbox, PenLine, Bot, Tag, Heading, Type, List, Minus,
   Paperclip, Presentation, FileEdit, Calendar, Loader2, Plus, FolderPlus,
   Image, Table, File, Pencil, ChevronUp, ChevronDown, Download,
-  ArrowLeft, Wrench
+  ArrowLeft, Wrench, Share2, Users, Lock
 } from 'lucide-react';
-import { getNotesAPI, createNoteAPI, updateNoteAPI, deleteNoteAPI, getTasksAPI, createTaskAPI, toggleTaskAPI, deleteTaskAPI, getSubjectsAPI, createSubjectAPI, renameSubjectAPI, deleteSubjectAPI, getDocumentsAPI, uploadDocumentAPI, downloadDocumentAPI, deleteDocumentAPI, getAiMessagesAPI, reorderNotesAPI } from '@/lib/api';
+import { getNotesAPI, createNoteAPI, updateNoteAPI, deleteNoteAPI, getTasksAPI, createTaskAPI, toggleTaskAPI, deleteTaskAPI, getSubjectsAPI, createSubjectAPI, renameSubjectAPI, deleteSubjectAPI, getDocumentsAPI, uploadDocumentAPI, downloadDocumentAPI, deleteDocumentAPI, getAiMessagesAPI, reorderNotesAPI, getSharedFoldersAPI, shareSubjectAPI, getSubjectSharesAPI, revokeSubjectShareAPI, searchUsersAPI, type SharedFolder, type FolderPermission, type FolderShareEntry } from '@/lib/api';
 import ResizableSidebar from '@/components/ResizableSidebar';
 import ConfirmModal from '@/components/ConfirmModal';
 import { markdownToBlocks } from '@/lib/markdownToBlocks';
@@ -38,6 +38,8 @@ interface Task {
   id: string;
   title: string;
   completed: boolean;
+  /** Folder this task is filed under; null for legacy tasks created before folders. */
+  subject: string | null;
 }
 
 interface UploadedFile {
@@ -45,6 +47,7 @@ interface UploadedFile {
   name: string;
   type: 'pdf' | 'ppt' | 'doc' | 'image' | 'csv' | 'excel' | 'other';
   uploadedAt: string;
+  subject: string | null;
   url?: string;
   mimeType?: string;
 }
@@ -125,6 +128,77 @@ function CsvPreview({ url }: { url: string }) {
   );
 }
 
+// useLayoutEffect warns during SSR; the editor only ever measures in the browser.
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
+
+/**
+ * Editor field that grows to fit its content instead of hiding the overflow
+ * behind an inner scrollbar. Re-measures when the pane is resized, so text
+ * stays fully visible at any sidebar width or screen size.
+ */
+function AutoGrowTextarea({
+  value,
+  onChange,
+  className = '',
+  placeholder,
+  singleLine = false,
+  readOnly = false,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  className?: string;
+  placeholder?: string;
+  /** Titles, headings and list items wrap but never take a hard line break. */
+  singleLine?: boolean;
+  /** View-only shared folders render their text without letting you edit it. */
+  readOnly?: boolean;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  const fitToContent = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, []);
+
+  useIsomorphicLayoutEffect(fitToContent, [value, fitToContent]);
+
+  // The sidebars are resizable and the pane is hidden on mobile until the
+  // editor view opens — both change the wrap point without touching the value.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let lastWidth = el.clientWidth;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0].contentRect.width;
+      if (width === lastWidth) return;
+      lastWidth = width;
+      fitToContent();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [fitToContent]);
+
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      value={value}
+      placeholder={placeholder}
+      readOnly={readOnly}
+      onChange={(e) => { if (!readOnly) onChange(e.target.value); }}
+      onKeyDown={(e) => {
+        if (singleLine && e.key === 'Enter') {
+          e.preventDefault();
+          e.currentTarget.blur();
+        }
+      }}
+      className={`nb-textarea ${className}`}
+    />
+  );
+}
+
 export default function NotebookPage() {
   const [pages, setPages] = useState<NotePage[]>([]);
   const [selectedPage, setSelectedPage] = useState<NotePage | null>(null);
@@ -151,6 +225,44 @@ export default function NotebookPage() {
   // Mobile-only view switcher: 'list' = subjects/pages, 'editor' = page editor, 'tools' = tasks/documents.
   // Desktop ignores this (panels render side-by-side via lg: classes).
   const [mobileView, setMobileView] = useState<'list' | 'editor' | 'tools'>('list');
+  // Tasks & documents belong to a folder. 'folder' shows only the open folder's
+  // items; 'all' shows every one, including legacy items with no folder.
+  const [toolScope, setToolScope] = useState<'folder' | 'all'>('folder');
+
+  // ─── Folder sharing ──────────────────────────────────────────────
+  // Folders other people shared with me, and the one currently open (null while
+  // I'm browsing my own folders). Shared content lives in its own arrays so it
+  // never collides by name with a folder of mine.
+  const [sharedFolders, setSharedFolders] = useState<SharedFolder[]>([]);
+  const [activeShare, setActiveShare] = useState<SharedFolder | null>(null);
+  const [sharedPages, setSharedPages] = useState<NotePage[]>([]);
+  const [sharedTasks, setSharedTasks] = useState<Task[]>([]);
+  const [sharedFiles, setSharedFiles] = useState<UploadedFile[]>([]);
+  const [loadingShared, setLoadingShared] = useState(false);
+  // Whether the open folder may be written to (my own folders always; shared ones
+  // only with edit permission).
+  const canEdit = !activeShare || activeShare.permission === 'edit';
+
+  // Share dialog: which of my folders is being shared, and its draft state.
+  const [shareTarget, setShareTarget] = useState<string | null>(null);
+  const [sharePermission, setSharePermission] = useState<FolderPermission>('view');
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shareError, setShareError] = useState('');
+  const [existingShares, setExistingShares] = useState<FolderShareEntry[]>([]);
+  const [loadingShares, setLoadingShares] = useState(false);
+  // Pick the recipient from a live user search, like the chat "new message" flow.
+  const [shareSearchQuery, setShareSearchQuery] = useState('');
+  const [shareSearchResults, setShareSearchResults] = useState<{ id: string; name: string; email: string; role?: string }[]>([]);
+  const [shareSearching, setShareSearching] = useState(false);
+
+  // Route note/task/document state updates to the shared arrays while a shared
+  // folder is open, and to my own arrays otherwise.
+  const patchPages = (fn: (prev: NotePage[]) => NotePage[]) =>
+    activeShare ? setSharedPages(fn) : setPages(fn);
+  const patchTasks = (fn: (prev: Task[]) => Task[]) =>
+    activeShare ? setSharedTasks(fn) : setTasks(fn);
+  const patchFiles = (fn: (prev: UploadedFile[]) => UploadedFile[]) =>
+    activeShare ? setSharedFiles(fn) : setUploadedFiles(fn);
 
   // Helper to map API note to frontend NotePage shape
   const mapAPINote = (apiNote: any): NotePage => ({
@@ -174,18 +286,21 @@ export default function NotebookPage() {
     id: apiTask._id,
     title: apiTask.title,
     completed: apiTask.completed,
+    subject: apiTask.subject ?? null,
   });
 
   // Fetch notes, tasks, subjects, and documents from database on mount
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [notesData, tasksData, subjectsData, documentsData] = await Promise.all([
+        const [notesData, tasksData, subjectsData, documentsData, sharedData] = await Promise.all([
           getNotesAPI(),
           getTasksAPI(),
           getSubjectsAPI(),
           getDocumentsAPI('notebook'),
+          getSharedFoldersAPI().catch(() => [] as SharedFolder[]),
         ]);
+        setSharedFolders(sharedData || []);
         const mappedNotes = notesData
           .filter((n: any) => n.title !== '__subject_placeholder__')
           .map(mapAPINote);
@@ -198,11 +313,15 @@ export default function NotebookPage() {
           name: d.name,
           type: d.type,
           uploadedAt: new Date(d.createdAt).toISOString().split('T')[0],
+          subject: d.subject ?? null,
         }));
         setUploadedFiles(mappedDocs);
         if (mappedNotes.length > 0) {
           setSelectedPage(mappedNotes[0]);
           setSelectedSubject(mappedNotes[0].subject);
+        } else if (subjectsData?.length > 0) {
+          // No pages yet — still open a folder so new tasks and documents are filed.
+          setSelectedSubject(subjectsData[0]);
         }
       } catch (err) {
         console.error('Failed to fetch notebook data:', err);
@@ -219,22 +338,144 @@ export default function NotebookPage() {
     page.tags?.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
-  // Get pages for selected subject (sorted by position)
-  const subjectPages = filteredPages
-    .filter(page => page.subject === selectedSubject)
+  // Pages shown in the open folder. A shared folder draws from its own content;
+  // my own folders filter the full list by the open subject.
+  const matchesSearch = (page: NotePage) =>
+    page.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    page.tags?.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()));
+  const subjectPages = (activeShare ? sharedPages.filter(matchesSearch) : filteredPages)
+    .filter(page => activeShare || page.subject === selectedSubject)
     .sort((a, b) => a.position - b.position);
+
+  // Tasks and documents live inside a folder. A shared folder shows only its own;
+  // with no folder open there is nothing to scope to, so everything is shown.
+  const isFolderScoped = !!activeShare || (toolScope === 'folder' && !!selectedSubject);
+  const visibleTasks = activeShare
+    ? sharedTasks
+    : isFolderScoped
+      ? tasks.filter(t => t.subject === selectedSubject)
+      : tasks;
+  const visibleFiles = activeShare
+    ? sharedFiles
+    : isFolderScoped
+      ? uploadedFiles.filter(f => f.subject === selectedSubject)
+      : uploadedFiles;
+
+  // Open one of my own folders (leaving any shared folder I was viewing).
+  const openOwnedFolder = (subject: string) => {
+    setActiveShare(null);
+    setSelectedSubject(subject);
+  };
+
+  // Open a folder someone shared with me — loads its notes/tasks/documents into
+  // the shared arrays after the backend confirms my access.
+  const openSharedFolder = async (sf: SharedFolder) => {
+    setActiveShare(sf);
+    setSelectedSubject(sf.subject);
+    setSelectedPage(null);
+    setToolScope('folder');
+    setLoadingShared(true);
+    try {
+      const [notesData, tasksData, docsData] = await Promise.all([
+        getNotesAPI({ ownerId: sf.ownerId, subject: sf.subject }),
+        getTasksAPI({ ownerId: sf.ownerId, subject: sf.subject }),
+        getDocumentsAPI('notebook', { ownerId: sf.ownerId, subject: sf.subject }),
+      ]);
+      const mappedNotes = notesData
+        .filter((n: any) => n.title !== '__subject_placeholder__')
+        .map(mapAPINote);
+      setSharedPages(mappedNotes);
+      setSharedTasks(tasksData.map(mapAPITask));
+      setSharedFiles(
+        docsData.map((d: any) => ({
+          id: d._id,
+          name: d.name,
+          type: d.type,
+          uploadedAt: new Date(d.createdAt).toISOString().split('T')[0],
+          subject: d.subject ?? null,
+        }))
+      );
+      if (mappedNotes.length > 0) setSelectedPage(mappedNotes[0]);
+    } catch (err) {
+      console.error('Failed to open shared folder:', err);
+    } finally {
+      setLoadingShared(false);
+    }
+  };
+
+  // ─── Share dialog ────────────────────────────────────────────────
+  const openShareDialog = async (subject: string) => {
+    setShareTarget(subject);
+    setSharePermission('view');
+    setShareError('');
+    setShareSearchQuery('');
+    setShareSearchResults([]);
+    setExistingShares([]);
+    setLoadingShares(true);
+    try {
+      setExistingShares(await getSubjectSharesAPI(subject));
+    } catch (err) {
+      console.error('Failed to load folder shares:', err);
+    } finally {
+      setLoadingShares(false);
+    }
+  };
+
+  // Live search of MediHub users to pick a recipient (mirrors the chat flow).
+  const handleShareSearch = async (query: string) => {
+    setShareSearchQuery(query);
+    setShareError('');
+    if (!query.trim()) {
+      setShareSearchResults([]);
+      return;
+    }
+    setShareSearching(true);
+    try {
+      setShareSearchResults(await searchUsersAPI(query));
+    } catch (err) {
+      console.error('User search failed:', err);
+    } finally {
+      setShareSearching(false);
+    }
+  };
+
+  // Share with a picked user at the currently selected permission.
+  const shareWithUser = async (user: { id: string; name: string; email: string }) => {
+    if (!shareTarget) return;
+    setShareBusy(true);
+    setShareError('');
+    try {
+      const entry = await shareSubjectAPI(shareTarget, user.id, sharePermission);
+      // Replace any existing entry for this user, then append.
+      setExistingShares(prev => [...prev.filter(s => s.user.id !== entry.user.id), entry]);
+      setShareSearchQuery('');
+      setShareSearchResults([]);
+    } catch (err: any) {
+      setShareError(err?.response?.data?.message || 'Could not share this folder');
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  const revokeShare = async (userId: string) => {
+    if (!shareTarget) return;
+    try {
+      await revokeSubjectShareAPI(shareTarget, userId);
+      setExistingShares(prev => prev.filter(s => s.user.id !== userId));
+    } catch (err) {
+      console.error('Failed to revoke share:', err);
+    }
+  };
 
   // Update page title (auto-saves to database)
   const updatePageTitle = (newTitle: string) => {
-    if (!selectedPage) return;
+    if (!selectedPage || !canEdit) return;
 
-    const updatedPages = pages.map(p =>
+    patchPages(prev => prev.map(p =>
       p.id === selectedPage.id
         ? { ...p, title: newTitle, updatedAt: new Date().toISOString() }
         : p
-    );
-
-    setPages(updatedPages);
+    ));
     setSelectedPage({ ...selectedPage, title: newTitle });
 
     // Save to database (debounced effect would be ideal, but simple save here)
@@ -243,7 +484,7 @@ export default function NotebookPage() {
 
   // Update block text (auto-saves to database)
   const updateBlockText = (blockId: string, newText: string) => {
-    if (!selectedPage) return;
+    if (!selectedPage || !canEdit) return;
 
     const updatedBlocks = selectedPage.blocks.map(b =>
       b.id === blockId ? { ...b, text: newText } : b
@@ -251,7 +492,7 @@ export default function NotebookPage() {
 
     const updatedPage = { ...selectedPage, blocks: updatedBlocks, updatedAt: new Date().toISOString() };
 
-    setPages(pages.map(p => p.id === selectedPage.id ? updatedPage : p));
+    patchPages(prev => prev.map(p => p.id === selectedPage.id ? updatedPage : p));
     setSelectedPage(updatedPage);
 
     // Save blocks to database
@@ -260,7 +501,7 @@ export default function NotebookPage() {
 
   // Toggle checklist (auto-saves to database)
   const toggleChecklist = (blockId: string) => {
-    if (!selectedPage) return;
+    if (!selectedPage || !canEdit) return;
 
     const updatedBlocks = selectedPage.blocks.map(b =>
       b.id === blockId ? { ...b, checked: !b.checked } : b
@@ -268,7 +509,7 @@ export default function NotebookPage() {
 
     const updatedPage = { ...selectedPage, blocks: updatedBlocks, updatedAt: new Date().toISOString() };
 
-    setPages(pages.map(p => p.id === selectedPage.id ? updatedPage : p));
+    patchPages(prev => prev.map(p => p.id === selectedPage.id ? updatedPage : p));
     setSelectedPage(updatedPage);
 
     updateNoteAPI(selectedPage.id, { blocks: updatedBlocks }).catch(console.error);
@@ -276,7 +517,7 @@ export default function NotebookPage() {
 
   // Add new block (saved to database)
   const addBlock = (type: BlockType) => {
-    if (!selectedPage) return;
+    if (!selectedPage || !canEdit) return;
 
     const newBlock: Block = {
       id: `b${Date.now()}`,
@@ -292,7 +533,7 @@ export default function NotebookPage() {
       updatedAt: new Date().toISOString(),
     };
 
-    setPages(pages.map(p => p.id === selectedPage.id ? updatedPage : p));
+    patchPages(prev => prev.map(p => p.id === selectedPage.id ? updatedPage : p));
     setSelectedPage(updatedPage);
     setShowBlockMenu(false);
 
@@ -301,12 +542,12 @@ export default function NotebookPage() {
 
   // Delete block (saved to database)
   const deleteBlock = (blockId: string) => {
-    if (!selectedPage) return;
+    if (!selectedPage || !canEdit) return;
 
     const updatedBlocks = selectedPage.blocks.filter(b => b.id !== blockId);
     const updatedPage = { ...selectedPage, blocks: updatedBlocks, updatedAt: new Date().toISOString() };
 
-    setPages(pages.map(p => p.id === selectedPage.id ? updatedPage : p));
+    patchPages(prev => prev.map(p => p.id === selectedPage.id ? updatedPage : p));
     setSelectedPage(updatedPage);
 
     updateNoteAPI(selectedPage.id, { blocks: updatedBlocks }).catch(console.error);
@@ -314,6 +555,7 @@ export default function NotebookPage() {
 
   // Create new page (saved to database)
   const createNewPage = async () => {
+    if (!canEdit) return;
     // No folder yet — send the user to folder creation first
     if (!selectedSubject) {
       setMobileView('list');
@@ -329,9 +571,11 @@ export default function NotebookPage() {
           { type: 'text', text: 'Start writing...' },
         ],
         tags: [],
+        // In a shared folder, file the new page under its owner.
+        ...(activeShare ? { ownerId: activeShare.ownerId } : {}),
       });
       const newPage = mapAPINote(apiNote);
-      setPages([...pages, newPage]);
+      patchPages(prev => [...prev, newPage]);
       setSelectedPage(newPage);
       setMobileView('editor');
     } catch (err) {
@@ -339,13 +583,15 @@ export default function NotebookPage() {
     }
   };
 
-  // Add task (saved to database)
+  // Add task to the open folder (saved to database)
   const addTask = async () => {
-    if (!newTaskTitle.trim()) return;
+    if (!newTaskTitle.trim() || !canEdit) return;
     try {
-      const apiTask = await createTaskAPI(newTaskTitle);
-      setTasks([...tasks, mapAPITask(apiTask)]);
+      const apiTask = await createTaskAPI(newTaskTitle, selectedSubject || undefined, activeShare?.ownerId);
+      patchTasks(prev => [...prev, mapAPITask(apiTask)]);
       setNewTaskTitle('');
+      // A task filed elsewhere would vanish from the current view — show it.
+      if (selectedSubject && !activeShare) setToolScope('folder');
     } catch (err) {
       console.error('Failed to create task:', err);
     }
@@ -353,9 +599,10 @@ export default function NotebookPage() {
 
   // Toggle task (saved to database)
   const toggleTask = async (taskId: string) => {
+    if (!canEdit) return;
     try {
       const updated = await toggleTaskAPI(taskId);
-      setTasks(tasks.map(t => t.id === taskId ? mapAPITask(updated) : t));
+      patchTasks(prev => prev.map(t => t.id === taskId ? mapAPITask(updated) : t));
     } catch (err) {
       console.error('Failed to toggle task:', err);
     }
@@ -363,9 +610,10 @@ export default function NotebookPage() {
 
   // Delete task (from database)
   const deleteTask = async (taskId: string) => {
+    if (!canEdit) return;
     try {
       await deleteTaskAPI(taskId);
-      setTasks(tasks.filter(t => t.id !== taskId));
+      patchTasks(prev => prev.filter(t => t.id !== taskId));
     } catch (err) {
       console.error('Failed to delete task:', err);
     }
@@ -373,7 +621,7 @@ export default function NotebookPage() {
 
   // Handle file upload - stores permanently in database
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files) return;
+    if (!e.target.files || !canEdit) return;
     setIsUploading(true);
 
     const files = Array.from(e.target.files);
@@ -394,6 +642,9 @@ export default function NotebookPage() {
           type,
           file: file,
           source: 'notebook',
+          subject: selectedSubject || undefined,
+          // In a shared folder, file the upload under its owner.
+          ...(activeShare ? { ownerId: activeShare.ownerId } : {}),
         });
 
         const newFile: UploadedFile = {
@@ -401,13 +652,16 @@ export default function NotebookPage() {
           name: saved.name,
           type: saved.type,
           uploadedAt: new Date(saved.createdAt).toISOString().split('T')[0],
+          subject: saved.subject ?? null,
         };
-        setUploadedFiles(prev => [...prev, newFile]);
+        patchFiles(prev => [...prev, newFile]);
       } catch (err) {
         console.error('Failed to upload document:', err);
       }
     }
     setIsUploading(false);
+    // Uploads land in the open folder — make sure that's what's on screen.
+    if (selectedSubject && !activeShare) setToolScope('folder');
     // Reset the file input
     e.target.value = '';
   };
@@ -568,6 +822,7 @@ export default function NotebookPage() {
 
       const newPage = mapAPINote(apiNote);
       setPages(prev => [...prev, newPage]);
+      setActiveShare(null);
       setSelectedSubject('AI Assistant');
       setSelectedPage(newPage);
       setMobileView('editor');
@@ -578,11 +833,14 @@ export default function NotebookPage() {
     }
   };
 
+  // On desktop the page is an app shell: it fills the viewport below the 4rem
+  // navbar and the workspace takes whatever height the masthead leaves, so the
+  // panes never spill past the fold or stop short of it.
   return (
-    <div className="min-h-screen gradient-subtle">
-      <div className="page-container">
+    <div className="min-h-screen lg:min-h-0 lg:h-[calc(100dvh-4rem)] gradient-subtle">
+      <div className="page-container lg:h-full lg:flex lg:flex-col lg:!pt-8 lg:!pb-6">
         {/* Editorial masthead — hidden on mobile when editing so the editor fills the screen */}
-        <header className={`relative mb-8 pb-8 border-b border-[var(--color-border-rule)] animate-section ${mobileView !== 'list' ? 'hidden lg:block' : ''}`}>
+        <header className={`relative mb-6 pb-6 border-b border-[var(--color-border-rule)] animate-section lg:shrink-0 ${mobileView !== 'list' ? 'hidden lg:block' : ''}`}>
           <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
             <div className="flex-1 max-w-3xl">
               <p className="label !mb-3">Workspace</p>
@@ -597,9 +855,9 @@ export default function NotebookPage() {
         </header>
 
         {/* Main Layout — calm three-pane workspace */}
-        <div className="workspace-shell rounded-2xl overflow-hidden flex flex-col lg:flex-row h-[calc(100vh-280px)] min-h-[560px] bg-[var(--color-surface-white)] border border-[var(--color-border-hairline)]" style={{ boxShadow: 'var(--shadow-card)' }}>
+        <div className="workspace-shell rounded-2xl overflow-hidden flex flex-col lg:flex-row h-[calc(100dvh-9rem)] lg:h-auto lg:flex-1 lg:min-h-[26rem] bg-[var(--color-surface-white)] border border-[var(--color-border-hairline)]" style={{ boxShadow: 'var(--shadow-card)' }}>
         {/* Left Sidebar */}
-        <ResizableSidebar side="left" defaultWidth={272} minWidth={220} maxWidth={420} className="lg:border-r border-[var(--color-border-hairline)] bg-[var(--color-surface-elevated)]" responsive mobileVisible={mobileView === 'list'}>
+        <ResizableSidebar side="left" defaultWidth={272} minWidth={210} maxWidth={420} viewportShare={0.2} className="lg:border-r border-[var(--color-border-hairline)] bg-[var(--color-surface-elevated)]" responsive mobileVisible={mobileView === 'list'}>
         <aside className="w-full h-full flex flex-col">
           {/* Search — quiet bar */}
           <div className="px-4 pt-5 pb-3">
@@ -642,6 +900,7 @@ export default function NotebookPage() {
                           try {
                             await createSubjectAPI(newSubjectName.trim());
                             setSubjects([...subjects, newSubjectName.trim()]);
+                            setActiveShare(null);
                             setSelectedSubject(newSubjectName.trim());
                             setNewSubjectName('');
                             setShowNewSubjectInput(false);
@@ -692,6 +951,8 @@ export default function NotebookPage() {
                                 const newName = renameValue.trim();
                                 setSubjects(subjects.map(s => s === subject ? newName : s));
                                 setPages(pages.map(p => p.subject === subject ? { ...p, subject: newName } : p));
+                                setTasks(prev => prev.map(t => t.subject === subject ? { ...t, subject: newName } : t));
+                                setUploadedFiles(prev => prev.map(f => f.subject === subject ? { ...f, subject: newName } : f));
                                 if (selectedSubject === subject) setSelectedSubject(newName);
                                 if (selectedPage?.subject === subject) setSelectedPage({ ...selectedPage, subject: newName });
                                 setRenamingSubject(null);
@@ -711,6 +972,8 @@ export default function NotebookPage() {
                                 const newName = renameValue.trim();
                                 setSubjects(subjects.map(s => s === subject ? newName : s));
                                 setPages(pages.map(p => p.subject === subject ? { ...p, subject: newName } : p));
+                                setTasks(prev => prev.map(t => t.subject === subject ? { ...t, subject: newName } : t));
+                                setUploadedFiles(prev => prev.map(f => f.subject === subject ? { ...f, subject: newName } : f));
                                 if (selectedSubject === subject) setSelectedSubject(newName);
                                 if (selectedPage?.subject === subject) setSelectedPage({ ...selectedPage, subject: newName });
                               } catch (err: any) {
@@ -723,15 +986,26 @@ export default function NotebookPage() {
                         />
                       </div>
                     ) : (
-                    <div className="nb-card group/subject" data-active={isExpanded}>
-                      <div onClick={() => setSelectedSubject(subject)} className="nb-card-head">
+                    <div className="nb-card group/subject" data-active={isExpanded && !activeShare}>
+                      <div onClick={() => openOwnedFolder(subject)} className="nb-card-head">
                         <span className="nb-card-icon">
-                          {isExpanded
+                          {isExpanded && !activeShare
                             ? <FolderOpen className="w-3.5 h-3.5" strokeWidth={1.75} />
                             : <Folder className="w-3.5 h-3.5" strokeWidth={1.75} />}
                         </span>
                         <span className="nb-card-title">{subject}</span>
                         <span className="nb-card-actions">
+                          <span
+                            role="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openShareDialog(subject);
+                            }}
+                            className="nb-handle-btn"
+                            title="Share folder"
+                          >
+                            <Share2 className="w-3 h-3" strokeWidth={1.75} />
+                          </span>
                           <span
                             role="button"
                             onClick={(e) => {
@@ -762,7 +1036,7 @@ export default function NotebookPage() {
                       </div>
 
                       {/* Pages under this subject */}
-                      {isExpanded && (
+                      {isExpanded && !activeShare && (
                         <div className="nb-card-body fade-in">
                           {subjectPages.map((page, idx) => {
                             const isPageActive = selectedPage?.id === page.id;
@@ -850,6 +1124,107 @@ export default function NotebookPage() {
                   </span>
                 </button>
               )}
+
+              {/* Shared with me — folders other users gave me access to */}
+              {sharedFolders.length > 0 && (
+                <div className="mt-4 pt-3 border-t border-[var(--color-border-hairline)]">
+                  <div className="flex items-center gap-1.5 px-3 mb-2">
+                    <Users className="w-3 h-3 text-[var(--color-text-soft)]" strokeWidth={1.75} />
+                    <span className="text-[10px] uppercase tracking-[0.18em] font-semibold text-[var(--color-text-soft)]">Shared with me</span>
+                  </div>
+                  {sharedFolders.map(sf => {
+                    const isActive = activeShare?.ownerId === sf.ownerId && activeShare?.subject === sf.subject;
+                    const accent = accentForSubject(sf.subject);
+                    const accentVars = { '--nb-accent': accent.dot, '--nb-accent-soft': accent.soft } as React.CSSProperties;
+                    return (
+                      <div key={`${sf.ownerId}:${sf.subject}`} className="mb-2" style={accentVars}>
+                        <div className="nb-card" data-active={isActive}>
+                          <div onClick={() => openSharedFolder(sf)} className="nb-card-head">
+                            <span className="nb-card-icon">
+                              {isActive
+                                ? <FolderOpen className="w-3.5 h-3.5" strokeWidth={1.75} />
+                                : <Folder className="w-3.5 h-3.5" strokeWidth={1.75} />}
+                            </span>
+                            <span className="nb-card-title">{sf.subject}</span>
+                            <span
+                              className="nb-chip shrink-0 inline-flex items-center gap-1"
+                              title={sf.permission === 'edit' ? 'You can edit this folder' : 'View only'}
+                            >
+                              {sf.permission === 'edit'
+                                ? <Pencil className="w-2.5 h-2.5" strokeWidth={2} />
+                                : <Lock className="w-2.5 h-2.5" strokeWidth={2} />}
+                              {sf.permission === 'edit' ? 'Edit' : 'View'}
+                            </span>
+                            <ChevronDown className="nb-card-chev w-3.5 h-3.5" data-expanded={isActive} strokeWidth={2} />
+                          </div>
+
+                          {isActive && (
+                            <div className="nb-card-body fade-in">
+                              <div className="px-2 pb-1.5 text-[11px] text-[var(--color-text-soft)] truncate">
+                                Shared by {sf.ownerName}
+                              </div>
+                              {loadingShared ? (
+                                <div className="px-2 space-y-1.5 py-1">
+                                  {[0, 1].map(i => (
+                                    <div key={i} className="skeleton h-6 w-full rounded" style={{ opacity: 1 - i * 0.3 }} />
+                                  ))}
+                                </div>
+                              ) : (
+                                <>
+                                  {subjectPages.map(page => {
+                                    const isPageActive = selectedPage?.id === page.id;
+                                    return (
+                                      <div
+                                        key={page.id}
+                                        onClick={() => { setSelectedPage(page); setMobileView('editor'); }}
+                                        data-active={isPageActive}
+                                        className="nb-row group/page"
+                                      >
+                                        <FileText className="w-3.5 h-3.5 text-[var(--color-text-soft)] shrink-0" strokeWidth={1.5} />
+                                        <span className="text-[0.8125rem] truncate flex-1 tracking-tight">
+                                          {page.title || 'Untitled'}
+                                        </span>
+                                        {canEdit && (
+                                          <span className="nb-row-actions">
+                                            <span
+                                              role="button"
+                                              onClick={(e) => { e.stopPropagation(); setDeletePageTarget(page); }}
+                                              className="nb-handle-btn hover:!text-red-500"
+                                              title="Delete page"
+                                            >
+                                              <X className="w-3 h-3" strokeWidth={2} />
+                                            </span>
+                                          </span>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+
+                                  {subjectPages.length === 0 && (
+                                    <p className="px-2 py-1.5 text-[11px] text-[var(--color-text-soft)] italic" style={{ fontFamily: 'var(--font-fraunces), serif' }}>
+                                      No pages yet.
+                                    </p>
+                                  )}
+
+                                  {canEdit && (
+                                    <div
+                                      onClick={createNewPage}
+                                      className="nb-row text-[var(--color-text-soft)] hover:text-[var(--color-navy)]"
+                                    >
+                                      <Plus className="w-3.5 h-3.5 shrink-0" strokeWidth={1.75} />
+                                      <span className="text-[0.8125rem] italic" style={{ fontFamily: 'var(--font-fraunces), serif' }}>New page</span>
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
           </div>
 
           {/* Add Note from AI Button — refined inline */}
@@ -873,7 +1248,7 @@ export default function NotebookPage() {
         </ResizableSidebar>
 
         {/* Main Editor Area — calm paper canvas */}
-        <main className={`flex-1 overflow-y-auto bg-[var(--color-surface-white)] ${mobileView === 'editor' ? 'block' : 'hidden'} lg:block`}>
+        <main className={`flex-1 min-w-0 overflow-y-auto bg-[var(--color-surface-white)] ${mobileView === 'editor' ? 'block' : 'hidden'} lg:block`}>
           {/* Mobile back-bar */}
           <div className="lg:hidden sticky top-0 z-30 flex items-center justify-between gap-2 px-3 py-2.5 bg-white/95 backdrop-blur border-b border-[var(--color-border-hairline)]">
             <button
@@ -896,14 +1271,15 @@ export default function NotebookPage() {
             </button>
           </div>
           {selectedPage ? (
-            <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-14 py-6 lg:py-16 fade-in">
+            <div className="nb-canvas fade-in">
               {/* Editable Page Title */}
-              <input
-                type="text"
+              <AutoGrowTextarea
                 value={selectedPage.title}
-                onChange={(e) => updatePageTitle(e.target.value)}
-                className="nb-title nb-input mb-3 placeholder:opacity-40"
+                onChange={updatePageTitle}
+                className="nb-title mb-3 placeholder:opacity-40"
                 placeholder="Untitled"
+                singleLine
+                readOnly={!canEdit}
               />
 
               {/* Metadata — quiet editorial spec */}
@@ -915,6 +1291,14 @@ export default function NotebookPage() {
                 <span className="flex items-center gap-1.5">
                   <Calendar className="w-3 h-3" strokeWidth={1.75} /> Updated {new Date(selectedPage.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                 </span>
+                {activeShare && (
+                  <>
+                    <span className="w-1 h-1 rounded-full bg-[var(--color-border-strong)]" />
+                    <span className="flex items-center gap-1.5">
+                      <Users className="w-3 h-3" strokeWidth={1.75} /> Shared by {activeShare.ownerName} · {canEdit ? 'Can edit' : 'View only'}
+                    </span>
+                  </>
+                )}
                 {selectedPage.tags && selectedPage.tags.length > 0 && (
                   <>
                     <span className="w-1 h-1 rounded-full bg-[var(--color-border-strong)]" />
@@ -929,64 +1313,70 @@ export default function NotebookPage() {
               <div className="space-y-1">
                 {selectedPage.blocks.map((block) => (
                   <div key={block.id} className="nb-block">
-                    <div className="nb-handle">
-                      <span
-                        role="button"
-                        onClick={() => deleteBlock(block.id)}
-                        className="nb-handle-btn hover:!text-red-500"
-                        title="Delete block"
-                      >
-                        <Trash2 className="w-3 h-3" strokeWidth={1.75} />
-                      </span>
-                    </div>
+                    {canEdit && (
+                      <div className="nb-handle">
+                        <span
+                          role="button"
+                          onClick={() => deleteBlock(block.id)}
+                          className="nb-handle-btn hover:!text-red-500"
+                          title="Delete block"
+                        >
+                          <Trash2 className="w-3 h-3" strokeWidth={1.75} />
+                        </span>
+                      </div>
+                    )}
 
                     {block.type === 'heading' && (
-                      <input
-                        type="text"
+                      <AutoGrowTextarea
                         value={block.text}
-                        onChange={(e) => updateBlockText(block.id, e.target.value)}
-                        className="nb-input nb-h"
+                        onChange={(text) => updateBlockText(block.id, text)}
+                        className="nb-h"
                         placeholder="Heading"
+                        singleLine
+                        readOnly={!canEdit}
                       />
                     )}
 
                     {block.type === 'text' && (
-                      <textarea
+                      <AutoGrowTextarea
                         value={block.text}
-                        onChange={(e) => updateBlockText(block.id, e.target.value)}
-                        className="nb-textarea nb-body resize-none"
+                        onChange={(text) => updateBlockText(block.id, text)}
+                        className="nb-body"
                         placeholder="Type ‘/’ or just start writing…"
-                        rows={Math.max(2, (block.text.match(/\n/g) || []).length + 1)}
+                        readOnly={!canEdit}
                       />
                     )}
 
                     {block.type === 'checklist' && (
-                      <div className="flex items-center gap-3 py-0.5">
+                      <div className="flex items-start gap-3 py-0.5">
                         <input
                           type="checkbox"
                           checked={block.checked || false}
                           onChange={() => toggleChecklist(block.id)}
-                          className="nb-checkbox"
+                          disabled={!canEdit}
+                          className="nb-checkbox mt-[0.3125rem]"
                         />
-                        <input
-                          type="text"
+                        <AutoGrowTextarea
                           value={block.text}
-                          onChange={(e) => updateBlockText(block.id, e.target.value)}
-                          className={`nb-input nb-body flex-1 ${block.checked ? 'line-through text-[var(--color-text-soft)]' : ''}`}
+                          onChange={(text) => updateBlockText(block.id, text)}
+                          className={`nb-body flex-1 min-w-0 ${block.checked ? 'line-through text-[var(--color-text-soft)]' : ''}`}
                           placeholder="To-do"
+                          singleLine
+                          readOnly={!canEdit}
                         />
                       </div>
                     )}
 
                     {block.type === 'bullet' && (
-                      <div className="flex items-baseline gap-3 py-0.5">
-                        <span className="text-[var(--color-text-muted)] font-bold leading-none mt-1.5 shrink-0">·</span>
-                        <input
-                          type="text"
+                      <div className="flex items-start gap-3 py-0.5">
+                        <span className="text-[var(--color-text-muted)] font-bold leading-none mt-[0.4375rem] shrink-0">·</span>
+                        <AutoGrowTextarea
                           value={block.text}
-                          onChange={(e) => updateBlockText(block.id, e.target.value)}
-                          className="nb-input nb-body flex-1"
+                          onChange={(text) => updateBlockText(block.id, text)}
+                          className="nb-body flex-1 min-w-0"
                           placeholder="List item"
+                          singleLine
+                          readOnly={!canEdit}
                         />
                       </div>
                     )}
@@ -1000,7 +1390,8 @@ export default function NotebookPage() {
                 ))}
               </div>
 
-              {/* Add Block Menu — slash-command vibe */}
+              {/* Add Block Menu — slash-command vibe (hidden on view-only shared folders) */}
+              {canEdit && (
               <div className="mt-8 relative">
                 <button
                   onClick={() => setShowBlockMenu(!showBlockMenu)}
@@ -1043,6 +1434,7 @@ export default function NotebookPage() {
                   </div>
                 )}
               </div>
+              )}
             </div>
           ) : (
             <div className="max-w-md mx-auto px-6 py-24 text-center fade-in">
@@ -1061,18 +1453,22 @@ export default function NotebookPage() {
                 A <span className="serif-accent">blank</span> page awaits.
               </h2>
               <p className="body-md mb-7 max-w-xs mx-auto">
-                Pick a page from the side, or start something new — your study, organized.
+                {canEdit
+                  ? 'Pick a page from the side, or start something new — your study, organized.'
+                  : 'Pick a page from the side to read it.'}
               </p>
-              <button onClick={createNewPage} className="btn-primary inline-flex items-center gap-2">
-                <Plus className="w-3.5 h-3.5" strokeWidth={2} />
-                New page
-              </button>
+              {canEdit && (
+                <button onClick={createNewPage} className="btn-primary inline-flex items-center gap-2">
+                  <Plus className="w-3.5 h-3.5" strokeWidth={2} />
+                  New page
+                </button>
+              )}
             </div>
           )}
         </main>
 
         {/* Right Sidebar — Tasks & Uploads */}
-        <ResizableSidebar side="right" defaultWidth={320} minWidth={240} maxWidth={500} className="lg:border-l border-[var(--color-border-hairline)] bg-[var(--color-surface-elevated)]" responsive mobileVisible={mobileView === 'tools'}>
+        <ResizableSidebar side="right" defaultWidth={320} minWidth={230} maxWidth={500} viewportShare={0.23} className="lg:border-l border-[var(--color-border-hairline)] bg-[var(--color-surface-elevated)]" responsive mobileVisible={mobileView === 'tools'}>
         <aside className="w-full h-full flex flex-col overflow-y-auto">
           {/* Mobile back-bar */}
           <div className="lg:hidden sticky top-0 z-20 flex items-center gap-2 px-3 py-2.5 bg-[var(--color-surface-elevated)] border-b border-[var(--color-border-hairline)]">
@@ -1086,11 +1482,51 @@ export default function NotebookPage() {
             <span className="text-sm font-semibold text-[var(--color-text-primary)]">Tasks & documents</span>
           </div>
 
+          {/* Folder scope — tasks and documents are kept per folder */}
+          <div className="px-5 pt-5 pb-4 border-b border-[var(--color-border-hairline)]">
+            <p className="label !mb-2">Filing</p>
+            <div className="flex items-center gap-2 mb-1 min-w-0">
+              <span
+                className="w-2 h-2 rounded-full shrink-0"
+                style={{ background: selectedSubject ? accentForSubject(selectedSubject).dot : 'var(--color-border-strong)' }}
+              />
+              <span className="text-[0.8125rem] font-semibold text-[var(--color-text-primary)] truncate tracking-tight">
+                {selectedSubject || 'No folder open'}
+              </span>
+            </div>
+            {activeShare ? (
+              <p className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-soft)] mb-1">
+                <Users className="w-3 h-3 shrink-0" strokeWidth={1.75} />
+                <span className="truncate">Shared by {activeShare.ownerName} · {canEdit ? 'Can edit' : 'View only'}</span>
+              </p>
+            ) : (
+              <div className="nb-scope mt-2" role="group" aria-label="Filter tasks and documents">
+                <button
+                  type="button"
+                  onClick={() => setToolScope('folder')}
+                  data-active={toolScope === 'folder'}
+                  disabled={!selectedSubject}
+                  className="nb-scope-btn"
+                >
+                  This folder
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setToolScope('all')}
+                  data-active={toolScope === 'all' || !selectedSubject}
+                  className="nb-scope-btn"
+                >
+                  All folders
+                </button>
+              </div>
+            )}
+          </div>
+
           {/* Tasks Section */}
           <div className="px-5 pt-5 pb-6 border-b border-[var(--color-border-hairline)]">
-            <div className="flex items-baseline justify-between mb-4">
-              <div>
-                <p className="label !mb-0.5">Today</p>
+            <div className="flex items-baseline justify-between gap-3 mb-4">
+              <div className="min-w-0">
+                <p className="label !mb-0.5">{isFolderScoped ? 'This folder' : 'Everything'}</p>
                 <h2
                   className="text-[var(--color-navy)]"
                   style={{ fontFamily: 'var(--font-fraunces), serif', fontSize: '1.125rem', fontWeight: 500, letterSpacing: '-0.02em' }}
@@ -1099,52 +1535,62 @@ export default function NotebookPage() {
                 </h2>
               </div>
               <span
-                className="text-[var(--color-text-soft)] tabular-nums"
+                className="text-[var(--color-text-soft)] tabular-nums shrink-0"
                 style={{ fontFamily: 'var(--font-fraunces), serif', fontSize: '0.9375rem', fontStyle: 'italic' }}
               >
-                {tasks.filter(t => !t.completed).length}/{tasks.length}
+                {visibleTasks.filter(t => !t.completed).length}/{visibleTasks.length}
               </span>
             </div>
 
             {/* Task List */}
             <div className="space-y-1 mb-4">
-              {tasks.length === 0 ? (
+              {visibleTasks.length === 0 ? (
                 <p className="text-[0.8125rem] text-[var(--color-text-soft)] italic px-1 py-2" style={{ fontFamily: 'var(--font-fraunces), serif' }}>
-                  Nothing to do — yet.
+                  {isFolderScoped ? `Nothing to do in ${selectedSubject} — yet.` : 'Nothing to do — yet.'}
                 </p>
               ) : (
-                tasks.map(task => (
-                  <div key={task.id} className="flex items-center gap-2.5 group py-1 px-1 -mx-1 rounded-md hover:bg-[var(--color-surface-white)] transition">
+                visibleTasks.map(task => (
+                  <div key={task.id} className="flex items-start gap-2.5 group py-1 px-1 -mx-1 rounded-md hover:bg-[var(--color-surface-white)] transition">
                     <input
                       type="checkbox"
                       checked={task.completed}
                       onChange={() => toggleTask(task.id)}
-                      className="nb-checkbox"
+                      disabled={!canEdit}
+                      className="nb-checkbox mt-[0.1875rem]"
                     />
-                    <span className={`flex-1 text-[0.8125rem] tracking-tight ${task.completed ? 'line-through text-[var(--color-text-soft)]' : 'text-[var(--color-text-primary)]'}`}>
-                      {task.title}
+                    <span className="flex-1 min-w-0">
+                      <span className={`block text-[0.8125rem] tracking-tight break-words ${task.completed ? 'line-through text-[var(--color-text-soft)]' : 'text-[var(--color-text-primary)]'}`}>
+                        {task.title}
+                      </span>
+                      {!isFolderScoped && (
+                        <span className="nb-chip mt-1">{task.subject || 'Unfiled'}</span>
+                      )}
                     </span>
-                    <button
-                      onClick={() => deleteTask(task.id)}
-                      className="opacity-0 group-hover:opacity-100 text-[var(--color-text-soft)] hover:text-red-500 transition p-0.5 rounded"
-                    >
-                      <X className="w-3 h-3" strokeWidth={2} />
-                    </button>
+                    {canEdit && (
+                      <button
+                        onClick={() => deleteTask(task.id)}
+                        className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-[var(--color-text-soft)] hover:text-red-500 transition p-0.5 rounded shrink-0"
+                        aria-label={`Delete task ${task.title}`}
+                      >
+                        <X className="w-3 h-3" strokeWidth={2} />
+                      </button>
+                    )}
                   </div>
                 ))
               )}
             </div>
 
-            {/* Add Task */}
+            {/* Add Task — hidden on view-only shared folders */}
+            {canEdit && (
             <div className="flex gap-1.5 items-center bg-[var(--color-surface-white)] border border-[var(--color-border-hairline)] rounded-md px-2.5 py-1.5 focus-within:border-[var(--color-navy)] transition-colors">
               <Plus className="w-3.5 h-3.5 text-[var(--color-text-soft)] shrink-0" strokeWidth={1.75} />
               <input
                 type="text"
                 value={newTaskTitle}
                 onChange={(e) => setNewTaskTitle(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && addTask()}
-                placeholder="Add a task…"
-                className="flex-1 bg-transparent border-none outline-none text-[0.8125rem] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-soft)]"
+                onKeyDown={(e) => { if (e.key === 'Enter') addTask(); }}
+                placeholder={selectedSubject ? `Add a task to ${selectedSubject}…` : 'Add a task…'}
+                className="flex-1 min-w-0 bg-transparent border-none outline-none text-[0.8125rem] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-soft)] truncate"
               />
               {newTaskTitle && (
                 <button
@@ -1155,21 +1601,31 @@ export default function NotebookPage() {
                 </button>
               )}
             </div>
+            )}
           </div>
 
           {/* Documents Section */}
           <div className="px-5 pt-6 pb-5 flex-1">
-            <div className="mb-4">
-              <p className="label !mb-0.5">Reference</p>
-              <h2
-                className="text-[var(--color-navy)]"
-                style={{ fontFamily: 'var(--font-fraunces), serif', fontSize: '1.125rem', fontWeight: 500, letterSpacing: '-0.02em' }}
+            <div className="flex items-baseline justify-between gap-3 mb-4">
+              <div className="min-w-0">
+                <p className="label !mb-0.5">Reference</p>
+                <h2
+                  className="text-[var(--color-navy)]"
+                  style={{ fontFamily: 'var(--font-fraunces), serif', fontSize: '1.125rem', fontWeight: 500, letterSpacing: '-0.02em' }}
+                >
+                  Documents
+                </h2>
+              </div>
+              <span
+                className="text-[var(--color-text-soft)] tabular-nums shrink-0"
+                style={{ fontFamily: 'var(--font-fraunces), serif', fontSize: '0.9375rem', fontStyle: 'italic' }}
               >
-                Documents
-              </h2>
+                {visibleFiles.length}
+              </span>
             </div>
 
-            {/* File Upload — refined dropzone */}
+            {/* File Upload — refined dropzone (hidden on view-only shared folders) */}
+            {canEdit && (
             <label className="nb-dropzone mb-4">
               {isUploading ? (
                 <>
@@ -1179,15 +1635,18 @@ export default function NotebookPage() {
               ) : (
                 <>
                   <Upload className="w-3.5 h-3.5" strokeWidth={1.75} />
-                  <span>Drop files or click to upload</span>
+                  <span className="text-center leading-snug">
+                    {selectedSubject ? `Upload to ${selectedSubject}` : 'Drop files or click to upload'}
+                  </span>
                 </>
               )}
               <input type="file" multiple onChange={handleFileUpload} className="hidden" accept=".pdf,.ppt,.pptx,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.svg,.bmp,.csv,.xls,.xlsx,.txt,.rtf,.odt,.ods,.odp" disabled={isUploading} />
             </label>
+            )}
 
             {/* Documents List */}
             <div className="space-y-1">
-              {uploadedFiles.map(file => (
+              {visibleFiles.map(file => (
                 <div key={file.id} className="relative group">
                   <button
                     onClick={() => openDocumentPreview(file)}
@@ -1200,36 +1659,45 @@ export default function NotebookPage() {
                       <div className="text-[0.8125rem] font-semibold text-[var(--color-text-primary)] truncate tracking-tight">
                         {file.name}
                       </div>
-                      <div className="flex items-center gap-1.5 mt-0.5 text-[10px] uppercase tracking-[0.16em] text-[var(--color-text-soft)] font-semibold">
+                      <div className="flex items-center flex-wrap gap-x-1.5 gap-y-0.5 mt-0.5 text-[10px] uppercase tracking-[0.16em] text-[var(--color-text-soft)] font-semibold">
                         <span>{file.type}</span>
                         <span className="w-0.5 h-0.5 rounded-full bg-[var(--color-border-strong)]" />
                         <span>{file.uploadedAt}</span>
+                        {!isFolderScoped && (
+                          <>
+                            <span className="w-0.5 h-0.5 rounded-full bg-[var(--color-border-strong)]" />
+                            <span className="truncate max-w-[9rem] normal-case tracking-normal">{file.subject || 'Unfiled'}</span>
+                          </>
+                        )}
                       </div>
                     </div>
                     <Eye className="w-3.5 h-3.5 text-[var(--color-text-soft)] opacity-0 group-hover:opacity-100 transition shrink-0" strokeWidth={1.5} />
                   </button>
-                  <button
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      try {
-                        await deleteDocumentAPI(file.id);
-                        setUploadedFiles(uploadedFiles.filter(f => f.id !== file.id));
-                      } catch (err) {
-                        console.error('Failed to delete document:', err);
-                      }
-                    }}
-                    className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 text-[var(--color-text-soft)] hover:text-red-500 transition bg-[var(--color-surface-white)] border border-[var(--color-border-hairline)] rounded p-0.5"
-                  >
-                    <X className="w-3 h-3" strokeWidth={2} />
-                  </button>
+                  {canEdit && (
+                    <button
+                      aria-label={`Delete ${file.name}`}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        try {
+                          await deleteDocumentAPI(file.id);
+                          patchFiles(prev => prev.filter(f => f.id !== file.id));
+                        } catch (err) {
+                          console.error('Failed to delete document:', err);
+                        }
+                      }}
+                      className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 text-[var(--color-text-soft)] hover:text-red-500 transition bg-[var(--color-surface-white)] border border-[var(--color-border-hairline)] rounded p-0.5"
+                    >
+                      <X className="w-3 h-3" strokeWidth={2} />
+                    </button>
+                  )}
                 </div>
               ))}
 
-              {uploadedFiles.length === 0 && (
+              {visibleFiles.length === 0 && (
                 <div className="text-center py-8">
                   <Inbox className="w-8 h-8 mx-auto mb-2 text-[var(--color-border-strong)]" strokeWidth={1.25} />
-                  <p className="text-[0.8125rem] text-[var(--color-text-soft)] italic" style={{ fontFamily: 'var(--font-fraunces), serif' }}>
-                    No documents — yet.
+                  <p className="text-[0.8125rem] text-[var(--color-text-soft)] italic px-2" style={{ fontFamily: 'var(--font-fraunces), serif' }}>
+                    {isFolderScoped ? `Nothing filed under ${selectedSubject} — yet.` : 'No documents — yet.'}
                   </p>
                 </div>
               )}
@@ -1322,7 +1790,7 @@ export default function NotebookPage() {
           if (!deletePageTarget) return;
           try {
             await deleteNoteAPI(deletePageTarget.id);
-            setPages(pages.filter(p => p.id !== deletePageTarget.id));
+            patchPages(prev => prev.filter(p => p.id !== deletePageTarget.id));
             if (selectedPage?.id === deletePageTarget.id) {
               setSelectedPage(null);
               setMobileView('list');
@@ -1438,8 +1906,8 @@ export default function NotebookPage() {
       {/* Delete Subject Confirmation */}
       <ConfirmModal
         open={!!deleteSubjectTarget}
-        title="Delete Subject?"
-        message={`This will permanently delete "${deleteSubjectTarget}" and all its pages. This action cannot be undone.`}
+        title="Delete Folder?"
+        message={`This will permanently delete "${deleteSubjectTarget}" along with its pages, tasks and documents. This action cannot be undone.`}
         confirmLabel="Delete"
         onConfirm={async () => {
           if (!deleteSubjectTarget) return;
@@ -1447,6 +1915,8 @@ export default function NotebookPage() {
             await deleteSubjectAPI(deleteSubjectTarget);
             setSubjects(subjects.filter(s => s !== deleteSubjectTarget));
             setPages(pages.filter(p => p.subject !== deleteSubjectTarget));
+            setTasks(prev => prev.filter(t => t.subject !== deleteSubjectTarget));
+            setUploadedFiles(prev => prev.filter(f => f.subject !== deleteSubjectTarget));
             if (selectedSubject === deleteSubjectTarget) {
               const remaining = subjects.filter(s => s !== deleteSubjectTarget);
               setSelectedSubject(remaining[0] || '');
@@ -1461,6 +1931,169 @@ export default function NotebookPage() {
         }}
         onCancel={() => setDeleteSubjectTarget(null)}
       />
+
+      {/* Share Folder Modal */}
+      {shareTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(0,11,51,0.4)] backdrop-blur-sm p-4 fade-in"
+          onClick={() => setShareTarget(null)}
+        >
+          <div
+            className="bg-[var(--color-surface-white)] rounded-2xl w-full max-w-md max-h-[85vh] flex flex-col overflow-hidden border border-[var(--color-border-hairline)]"
+            style={{ boxShadow: 'var(--shadow-modal)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="px-7 pt-6 pb-5 border-b border-[var(--color-border-hairline)] flex items-start justify-between gap-4 shrink-0">
+              <div className="min-w-0">
+                <p className="label !mb-2">Share folder</p>
+                <h3
+                  className="text-[var(--color-navy)] truncate"
+                  style={{ fontFamily: 'var(--font-fraunces), serif', fontSize: '1.375rem', fontWeight: 500, letterSpacing: '-0.025em' }}
+                >
+                  {shareTarget}
+                </h3>
+                <p className="text-[0.8125rem] text-[var(--color-text-muted)] mt-1.5">
+                  Give another MediHub user access to this folder&apos;s notes, tasks and documents.
+                </p>
+              </div>
+              <button
+                onClick={() => setShareTarget(null)}
+                className="text-[var(--color-text-soft)] hover:text-[var(--color-navy)] hover:bg-[var(--color-surface-elevated)] p-2 rounded-md transition shrink-0"
+              >
+                <X className="w-4 h-4" strokeWidth={2} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="px-7 py-5 space-y-4 overflow-y-auto">
+              {/* Permission toggle — sets the access for the next person you pick */}
+              <div>
+                <label className="label !mb-1.5 block">They can</label>
+                <div className="nb-scope" role="group" aria-label="Permission">
+                  <button
+                    type="button"
+                    onClick={() => setSharePermission('view')}
+                    data-active={sharePermission === 'view'}
+                    className="nb-scope-btn"
+                  >
+                    <Lock className="w-3 h-3 inline mr-1 -mt-0.5" strokeWidth={2} /> View only
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSharePermission('edit')}
+                    data-active={sharePermission === 'edit'}
+                    className="nb-scope-btn"
+                  >
+                    <Pencil className="w-3 h-3 inline mr-1 -mt-0.5" strokeWidth={2} /> Can edit
+                  </button>
+                </div>
+              </div>
+
+              {/* User picker — search MediHub users, click one to share */}
+              <div>
+                <label className="label !mb-1.5 block">Add a person</label>
+                <div className="flex items-center gap-2 bg-[var(--color-surface-white)] border border-[var(--color-border-hairline)] rounded-md px-3 py-2 focus-within:border-[var(--color-navy)] transition-colors">
+                  <Search className="w-3.5 h-3.5 text-[var(--color-text-soft)] shrink-0" strokeWidth={1.75} />
+                  <input
+                    type="text"
+                    value={shareSearchQuery}
+                    onChange={(e) => handleShareSearch(e.target.value)}
+                    placeholder="Search by name or email…"
+                    className="flex-1 min-w-0 bg-transparent border-none outline-none text-[0.8125rem] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-soft)]"
+                    autoFocus
+                  />
+                  {shareBusy && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-soft)]" strokeWidth={2} />}
+                </div>
+
+                {/* Results */}
+                <div className="mt-2 space-y-1.5 max-h-52 overflow-y-auto">
+                  {shareSearching ? (
+                    [0, 1, 2].map(i => (
+                      <div key={i} className="flex items-center gap-2.5 px-2.5 py-2" style={{ opacity: 1 - i * 0.25 }}>
+                        <div className="skeleton w-7 h-7 rounded-full shrink-0" />
+                        <div className="flex-1">
+                          <div className="skeleton h-3 w-24 mb-1.5" />
+                          <div className="skeleton h-2.5 w-36" />
+                        </div>
+                      </div>
+                    ))
+                  ) : shareSearchQuery && shareSearchResults.length === 0 ? (
+                    <p className="text-[0.8125rem] text-[var(--color-text-soft)] italic px-1 py-2" style={{ fontFamily: 'var(--font-fraunces), serif' }}>
+                      No users found for &ldquo;{shareSearchQuery}&rdquo;.
+                    </p>
+                  ) : (
+                    shareSearchResults.map(u => {
+                      const alreadyShared = existingShares.some(s => s.user.id === u.id);
+                      return (
+                        <button
+                          key={u.id}
+                          onClick={() => shareWithUser(u)}
+                          disabled={shareBusy}
+                          className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-left hover:bg-[var(--color-surface-elevated)] border border-transparent hover:border-[var(--color-border-hairline)] transition disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <span className="w-7 h-7 rounded-full bg-[var(--color-blue-soft)] text-[var(--color-navy)] flex items-center justify-center text-[11px] font-bold uppercase shrink-0">
+                            {u.name?.charAt(0) || '?'}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[0.8125rem] font-semibold text-[var(--color-text-primary)] truncate">{u.name}</div>
+                            <div className="text-[11px] text-[var(--color-text-soft)] truncate">{u.email}</div>
+                          </div>
+                          {alreadyShared
+                            ? <span className="nb-chip shrink-0">Update</span>
+                            : <Plus className="w-3.5 h-3.5 text-[var(--color-text-soft)] shrink-0" strokeWidth={2} />}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {shareError && (
+                <p className="text-[0.8125rem] text-red-500">{shareError}</p>
+              )}
+
+              {/* Existing shares */}
+              <div className="pt-2 border-t border-[var(--color-border-hairline)]">
+                <p className="label !mb-2.5 !mt-3">People with access</p>
+                {loadingShares ? (
+                  <div className="space-y-2">
+                    {[0, 1].map(i => (
+                      <div key={i} className="skeleton h-11 w-full rounded-md" style={{ opacity: 1 - i * 0.3 }} />
+                    ))}
+                  </div>
+                ) : existingShares.length === 0 ? (
+                  <p className="text-[0.8125rem] text-[var(--color-text-soft)] italic" style={{ fontFamily: 'var(--font-fraunces), serif' }}>
+                    Not shared with anyone yet.
+                  </p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {existingShares.map(s => (
+                      <div key={s.id} className="flex items-center gap-2.5 px-2.5 py-2 rounded-md bg-[var(--color-surface-elevated)] border border-[var(--color-border-hairline)]">
+                        <span className="w-7 h-7 rounded-full bg-[var(--color-blue-soft)] text-[var(--color-navy)] flex items-center justify-center text-[11px] font-bold uppercase shrink-0">
+                          {s.user.name?.charAt(0) || '?'}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[0.8125rem] font-semibold text-[var(--color-text-primary)] truncate">{s.user.name}</div>
+                          <div className="text-[11px] text-[var(--color-text-soft)] truncate">{s.user.email}</div>
+                        </div>
+                        <span className="nb-chip shrink-0">{s.permission === 'edit' ? 'Edit' : 'View'}</span>
+                        <button
+                          onClick={() => revokeShare(s.user.id)}
+                          className="text-[var(--color-text-soft)] hover:text-red-500 transition p-1 rounded shrink-0"
+                          aria-label={`Remove ${s.user.name}`}
+                        >
+                          <X className="w-3.5 h-3.5" strokeWidth={2} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
     </div>
   );

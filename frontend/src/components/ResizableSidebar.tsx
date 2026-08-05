@@ -14,6 +14,12 @@ interface ResizableSidebarProps {
   responsive?: boolean;
   /** When false, the sidebar is hidden on small screens (<lg). Desktop is unaffected. */
   mobileVisible?: boolean;
+  /**
+   * Largest share of the viewport this rail may claim on first paint. Without
+   * it a fixed defaultWidth squeezes the middle pane on smaller desktops —
+   * two 300px rails leave a 1024px window barely 380px to work in.
+   */
+  viewportShare?: number;
 }
 
 export default function ResizableSidebar({
@@ -26,8 +32,17 @@ export default function ResizableSidebar({
   collapsedWidth = 0,
   responsive = false,
   mobileVisible = true,
+  viewportShare,
 }: ResizableSidebarProps) {
   const [width, setWidth] = useState(defaultWidth);
+
+  // Trim the starting width to fit the window. Runs once so it never fights a
+  // width the user has dragged to.
+  useEffect(() => {
+    if (!viewportShare) return;
+    const cap = Math.round(window.innerWidth * viewportShare);
+    setWidth((current) => Math.max(minWidth, Math.min(current, cap)));
+  }, [viewportShare, minWidth]);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [isHandleHovered, setIsHandleHovered] = useState(false);

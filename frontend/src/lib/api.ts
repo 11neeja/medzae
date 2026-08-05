@@ -124,8 +124,12 @@ export const deletePostAPI = async (postId: string) => {
 }
 
 // ─── Notes API ─────────────────────────────────────────────────────
-export const getNotesAPI = async () => {
-  const res = await api.get('/notes')
+// Pass { ownerId, subject } to read a folder someone else shared with you.
+export const getNotesAPI = async (shared?: { ownerId: string; subject: string }) => {
+  const params = shared
+    ? `?ownerId=${encodeURIComponent(shared.ownerId)}&subject=${encodeURIComponent(shared.subject)}`
+    : ''
+  const res = await api.get(`/notes${params}`)
   return res.data
 }
 
@@ -134,6 +138,8 @@ export const createNoteAPI = async (data: {
   subject: string
   blocks?: any[]
   tags?: string[]
+  /** Owner of the shared folder to file this note under (shared-folder edits). */
+  ownerId?: string
 }) => {
   const res = await api.post('/notes', data)
   return res.data
@@ -178,10 +184,67 @@ export const deleteSubjectAPI = async (name: string) => {
   return res.data
 }
 
+// ─── Folder Sharing API ────────────────────────────────────────────
+export type FolderPermission = 'view' | 'edit'
+
+export interface SharedFolder {
+  subject: string
+  permission: FolderPermission
+  ownerId: string
+  ownerName: string
+  ownerEmail: string
+}
+
+export interface FolderShareEntry {
+  id: string
+  permission: FolderPermission
+  user: { id: string; name: string; email: string }
+}
+
+// Folders other users have shared with me.
+export const getSharedFoldersAPI = async (): Promise<SharedFolder[]> => {
+  const res = await api.get('/notes/shared')
+  return res.data
+}
+
+// Share one of my folders with a user (picked from the user search).
+export const shareSubjectAPI = async (
+  subject: string,
+  userId: string,
+  permission: FolderPermission
+): Promise<FolderShareEntry> => {
+  const res = await api.post(`/notes/subjects/${encodeURIComponent(subject)}/share`, {
+    userId,
+    permission,
+  })
+  return res.data
+}
+
+// Who a folder of mine is currently shared with.
+export const getSubjectSharesAPI = async (subject: string): Promise<FolderShareEntry[]> => {
+  const res = await api.get(`/notes/subjects/${encodeURIComponent(subject)}/shares`)
+  return res.data
+}
+
+export const revokeSubjectShareAPI = async (subject: string, userId: string) => {
+  const res = await api.delete(`/notes/subjects/${encodeURIComponent(subject)}/share/${userId}`)
+  return res.data
+}
+
 // ─── Documents API ─────────────────────────────────────────────────
-export const getDocumentsAPI = async (source?: 'assistant' | 'notebook') => {
-  const params = source ? `?source=${source}` : ''
-  const res = await api.get(`/documents${params}`)
+// Pass { ownerId, subject } to read documents in a folder someone shared with you.
+export const getDocumentsAPI = async (
+  source?: 'assistant' | 'notebook',
+  shared?: { ownerId: string; subject: string }
+) => {
+  const query = new URLSearchParams()
+  if (source) query.set('source', source)
+  if (shared) {
+    query.set('ownerId', shared.ownerId)
+    query.set('subject', shared.subject)
+  }
+  const qs = query.toString()
+  const res = await api.get(`/documents${qs ? `?${qs}` : ''}`)
   return res.data
 }
 
@@ -190,12 +253,18 @@ export const uploadDocumentAPI = async (data: {
   type: string
   file: File
   source?: 'assistant' | 'notebook'
+  /** Notebook folder to file this document under (notebook uploads only). */
+  subject?: string
+  /** Owner of the shared folder to file this document under (shared-folder edits). */
+  ownerId?: string
 }) => {
   const formData = new FormData()
   formData.append('file', data.file)
   formData.append('name', data.name)
   formData.append('type', data.type)
   if (data.source) formData.append('source', data.source)
+  if (data.subject) formData.append('subject', data.subject)
+  if (data.ownerId) formData.append('ownerId', data.ownerId)
   const res = await api.post('/documents', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
@@ -251,13 +320,17 @@ export const clearAiMessagesAPI = async () => {
 }
 
 // ─── Tasks API ─────────────────────────────────────────────────────
-export const getTasksAPI = async () => {
-  const res = await api.get('/tasks')
+// Pass { ownerId, subject } to read tasks in a folder someone shared with you.
+export const getTasksAPI = async (shared?: { ownerId: string; subject: string }) => {
+  const params = shared
+    ? `?ownerId=${encodeURIComponent(shared.ownerId)}&subject=${encodeURIComponent(shared.subject)}`
+    : ''
+  const res = await api.get(`/tasks${params}`)
   return res.data
 }
 
-export const createTaskAPI = async (title: string) => {
-  const res = await api.post('/tasks', { title })
+export const createTaskAPI = async (title: string, subject?: string, ownerId?: string) => {
+  const res = await api.post('/tasks', { title, subject, ownerId })
   return res.data
 }
 
