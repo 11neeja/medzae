@@ -28,6 +28,11 @@ const TOOLBAR_WIDTH = 268;
 const TOOLBAR_HEIGHT = 40;
 const GAP = 8;
 
+/** The editable block a selection boundary sits in, if any. */
+const blockOf = (node: Node | null | undefined): HTMLElement | null =>
+  ((node?.nodeType === Node.ELEMENT_NODE ? (node as Element) : node?.parentElement)
+    ?.closest('[data-rich-block="true"]') as HTMLElement | null) ?? null;
+
 /**
  * Formatting bar that surfaces only when text inside a note block is selected,
  * anchored to the selection itself. Deliberately small: bold, italic,
@@ -45,10 +50,16 @@ export default function TextFormatToolbar({ onFormatted }: Props) {
     }
 
     // Only for text inside an editable block — not the sidebar, not a title.
-    const anchor = selection.anchorNode;
-    const host = (anchor?.nodeType === Node.ELEMENT_NODE ? (anchor as Element) : anchor?.parentElement)
-      ?.closest('[data-rich-block="true"]') as HTMLElement | null;
-    if (!host || host.getAttribute('contenteditable') !== 'true') {
+    // Both ends must be in the *same* block: each block is its own editable, so
+    // a selection spanning two of them can only ever format the first, which
+    // looks broken. Better to offer nothing than to do a fraction of the job.
+    const anchorHost = blockOf(selection.anchorNode);
+    const focusHost = blockOf(selection.focusNode);
+    if (
+      !anchorHost ||
+      anchorHost !== focusHost ||
+      anchorHost.getAttribute('contenteditable') !== 'true'
+    ) {
       setPlacement(null);
       return;
     }
@@ -94,10 +105,7 @@ export default function TextFormatToolbar({ onFormatted }: Props) {
   if (!placement) return null;
 
   const run = (command: string, value?: string) => {
-    const selection = window.getSelection();
-    const anchor = selection?.anchorNode;
-    const host = (anchor?.nodeType === Node.ELEMENT_NODE ? (anchor as Element) : anchor?.parentElement)
-      ?.closest('[data-rich-block="true"]') as HTMLElement | null;
+    const host = blockOf(window.getSelection()?.anchorNode);
 
     // Colour has to be an inline style (the alternative is the legacy <font>
     // tag), but bold/italic/underline are better off as <b>/<i>/<u> — as CSS
