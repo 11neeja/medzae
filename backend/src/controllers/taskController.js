@@ -1,5 +1,5 @@
 import prisma from '../config/prisma.js'
-import { getFolderShare, canEditFolder, resolveFolderOwner } from '../utils/folderShare.js'
+import { getFolderShare, canEditFolder, resolveFolderOwner, emitFolderEvent } from '../utils/folderShare.js'
 
 // @desc    Get all tasks for logged-in user (optionally one notebook folder)
 // @route   GET /api/tasks?subject=Anatomy  (shared: &ownerId=...)
@@ -45,7 +45,15 @@ export const createTask = async (req, res) => {
         subject: cleanSubject,
       },
     })
-    res.status(201).json({ ...task, _id: task.id })
+    const payload = { ...task, _id: task.id }
+    emitFolderEvent(req.app.get('io'), {
+      ownerId: task.userId,
+      subject: task.subject,
+      actorId: req.user.id,
+      event: 'notebook:task-saved',
+      payload: { task: payload },
+    })
+    res.status(201).json(payload)
   } catch (error) {
     res.status(500).json({ message: error.message })
   }
@@ -66,7 +74,15 @@ export const toggleTask = async (req, res) => {
       where: { id: req.params.id },
       data: { completed: !task.completed },
     })
-    res.json({ ...updated, _id: updated.id })
+    const payload = { ...updated, _id: updated.id }
+    emitFolderEvent(req.app.get('io'), {
+      ownerId: updated.userId,
+      subject: updated.subject,
+      actorId: req.user.id,
+      event: 'notebook:task-saved',
+      payload: { task: payload },
+    })
+    res.json(payload)
   } catch (error) {
     res.status(500).json({ message: error.message })
   }
@@ -83,6 +99,13 @@ export const deleteTask = async (req, res) => {
       if (!allowed) return res.status(404).json({ message: 'Task not found' })
     }
     await prisma.task.delete({ where: { id: req.params.id } })
+    emitFolderEvent(req.app.get('io'), {
+      ownerId: task.userId,
+      subject: task.subject,
+      actorId: req.user.id,
+      event: 'notebook:task-removed',
+      payload: { taskId: task.id },
+    })
     res.json({ message: 'Task deleted' })
   } catch (error) {
     res.status(500).json({ message: error.message })

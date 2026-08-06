@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import { extractTextFromFile } from '../utils/extractText.js'
 import { isRemoteUrl, removeUploadedFile } from '../utils/storage.js'
-import { getFolderShare, canEditFolder, resolveFolderOwner } from '../utils/folderShare.js'
+import { getFolderShare, canEditFolder, resolveFolderOwner, emitFolderEvent } from '../utils/folderShare.js'
 
 // @desc    Get all documents for logged-in user (optionally by source / notebook folder)
 // @route   GET /api/documents?source=assistant|notebook&subject=Anatomy  (shared: &ownerId=...)
@@ -90,7 +90,18 @@ export const uploadDocument = async (req, res) => {
         })
     }
 
-    res.status(201).json({ ...document, _id: document.id })
+    const payload = { ...document, _id: document.id }
+    // Notebook uploads live inside a folder, so collaborators see them arrive.
+    if (docSource === 'notebook') {
+      emitFolderEvent(req.app.get('io'), {
+        ownerId: document.userId,
+        subject: document.subject,
+        actorId: req.user.id,
+        event: 'notebook:doc-saved',
+        payload: { document: payload },
+      })
+    }
+    res.status(201).json(payload)
   } catch (error) {
     res.status(500).json({ message: error.message })
   }
@@ -156,6 +167,15 @@ export const deleteDocument = async (req, res) => {
     removeUploadedFile(document.filePath)
 
     await prisma.document.delete({ where: { id: req.params.id } })
+    if (document.source === 'notebook') {
+      emitFolderEvent(req.app.get('io'), {
+        ownerId: document.userId,
+        subject: document.subject,
+        actorId: req.user.id,
+        event: 'notebook:doc-removed',
+        payload: { documentId: document.id },
+      })
+    }
     res.json({ message: 'Document deleted' })
   } catch (error) {
     res.status(500).json({ message: error.message })

@@ -10,6 +10,7 @@ import {
   CheckCircle2, AlertCircle, Sparkles, Paperclip, ArrowRight, ArrowLeft, Library
 } from 'lucide-react';
 import ConfirmModal from '@/components/ConfirmModal';
+import FolderChoice from '@/components/FolderChoice';
 import ResizableSidebar from '@/components/ResizableSidebar';
 import MarkdownMessage from '@/components/MarkdownMessage';
 import { markdownToBlocks } from '@/lib/markdownToBlocks';
@@ -22,6 +23,7 @@ import {
   getAiMessagesAPI,
   saveAiMessageAPI,
   clearAiMessagesAPI,
+  getSubjectsAPI,
 } from '@/lib/api';
 
 // Type definitions
@@ -107,6 +109,12 @@ export default function AssistantPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [deleteDocId, setDeleteDocId] = useState<string | null>(null);
   const [showClearChat, setShowClearChat] = useState(false);
+  // Saving a response to the notebook: which message, and the folder it lands in.
+  const [saveTarget, setSaveTarget] = useState<AssistantMessage | null>(null);
+  const [notebookFolders, setNotebookFolders] = useState<string[]>([]);
+  const [saveFolder, setSaveFolder] = useState('AI Assistant');
+  const [loadingFolders, setLoadingFolders] = useState(false);
+  const [savingNote, setSavingNote] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   // Mobile-only view switcher: 'chat' shows the conversation, 'library' shows the document library.
   // Desktop ignores this (panels render side-by-side via lg: classes).
@@ -393,22 +401,43 @@ export default function AssistantPage() {
     return `AI Response - ${new Date().toLocaleDateString()}`;
   };
 
-  // Save to notebook via API
+  // Ask where the response should be filed before saving it.
   const handleSaveToNotebook = async (message: AssistantMessage) => {
+    setSaveTarget(message);
+    setSaveFolder('AI Assistant');
+    setLoadingFolders(true);
     try {
-      const blocks = markdownToBlocks(message.text);
-      const title = findUserQuestion(message);
+      const folders = await getSubjectsAPI();
+      setNotebookFolders(folders || []);
+    } catch (err) {
+      console.error('Failed to load notebook folders:', err);
+      setNotebookFolders([]);
+    } finally {
+      setLoadingFolders(false);
+    }
+  };
 
+  // Save to notebook via API, into the folder picked in the dialog.
+  const confirmSaveToNotebook = async () => {
+    const folder = saveFolder.trim();
+    if (!saveTarget || !folder) return;
+    setSavingNote(true);
+    try {
       await addNote({
-        subject: 'AI Assistant',
-        title,
-        blocks,
+        subject: folder,
+        title: findUserQuestion(saveTarget),
+        blocks: markdownToBlocks(saveTarget.text),
         tags: ['AI Assistant'],
       });
-      showToast('Saved to your Notebook!', 'success');
+      // A folder that didn't exist does now — keep it for the next save.
+      setNotebookFolders(prev => (prev.includes(folder) ? prev : [...prev, folder]));
+      setSaveTarget(null);
+      showToast(`Saved to “${folder}” in your Notebook!`, 'success');
     } catch (err) {
       console.error('Save failed:', err);
       showToast('Failed to save to notebook.', 'error');
+    } finally {
+      setSavingNote(false);
     }
   };
 
@@ -1008,6 +1037,83 @@ export default function AssistantPage() {
         onConfirm={() => deleteDocId && handleDeleteDocument(deleteDocId)}
         onCancel={() => setDeleteDocId(null)}
       />
+
+      {/* Save to Notebook — choose the folder first */}
+      {saveTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(0,11,51,0.4)] backdrop-blur-sm p-4 fade-in"
+          onClick={() => !savingNote && setSaveTarget(null)}
+        >
+          <div
+            className="bg-[var(--color-surface-white)] rounded-2xl w-full max-w-md max-h-[85vh] flex flex-col overflow-hidden border border-[var(--color-border-hairline)]"
+            style={{ boxShadow: 'var(--shadow-modal)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-7 pt-6 pb-5 border-b border-[var(--color-border-hairline)] flex items-start justify-between gap-4 shrink-0">
+              <div className="min-w-0">
+                <p className="label !mb-2">Save to notebook</p>
+                <h3
+                  className="text-[var(--color-navy)] truncate"
+                  style={{ fontFamily: 'var(--font-fraunces), serif', fontSize: '1.375rem', fontWeight: 500, letterSpacing: '-0.025em' }}
+                >
+                  {findUserQuestion(saveTarget)}
+                </h3>
+                <p className="text-[0.8125rem] text-[var(--color-text-muted)] mt-1.5">
+                  The response is saved as a page, formatted as blocks.
+                </p>
+              </div>
+              <button
+                onClick={() => setSaveTarget(null)}
+                disabled={savingNote}
+                className="text-[var(--color-text-soft)] hover:text-[var(--color-navy)] hover:bg-[var(--color-surface-elevated)] p-2 rounded-md transition shrink-0 disabled:opacity-50"
+              >
+                <X className="w-4 h-4" strokeWidth={2} />
+              </button>
+            </div>
+
+            <div className="px-7 py-5 overflow-y-auto">
+              {loadingFolders ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {[0, 1, 2].map(i => (
+                    <div key={i} className="skeleton h-7 w-24 rounded-full" style={{ opacity: 1 - i * 0.25 }} />
+                  ))}
+                </div>
+              ) : (
+                <FolderChoice
+                  folders={notebookFolders}
+                  value={saveFolder}
+                  onChange={setSaveFolder}
+                  hint={
+                    saveFolder.trim() && !notebookFolders.includes(saveFolder.trim())
+                      ? `“${saveFolder.trim()}” will be created in your notebook.`
+                      : undefined
+                  }
+                />
+              )}
+            </div>
+
+            <div className="px-7 py-4 border-t border-[var(--color-border-hairline)] flex items-center justify-end gap-2 shrink-0">
+              <button
+                onClick={() => setSaveTarget(null)}
+                disabled={savingNote}
+                className="px-4 py-2 rounded-md text-[0.8125rem] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-navy)] hover:bg-[var(--color-surface-elevated)] transition disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmSaveToNotebook}
+                disabled={savingNote || !saveFolder.trim()}
+                className="px-4 py-2 rounded-md text-[0.8125rem] font-semibold flex items-center gap-2 gradient-ink text-white hover:brightness-110 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ boxShadow: 'var(--shadow-btn), var(--shadow-inset)' }}
+              >
+                {savingNote
+                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={2} /> Saving…</>
+                  : <><Save className="w-3.5 h-3.5" strokeWidth={2} /> Save page</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Clear Chat Confirmation */}
       <ConfirmModal

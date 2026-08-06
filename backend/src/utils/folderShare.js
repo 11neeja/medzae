@@ -39,3 +39,30 @@ export async function resolveFolderOwner(viewerId, ownerId, subject) {
   if (await canEditFolder(viewerId, ownerId, subject)) return { userId: ownerId }
   return { error: 'You do not have edit access to this folder' }
 }
+
+/** Everyone who can see `ownerId`'s folder `subject` — the owner and every recipient. */
+export async function folderAudience(ownerId, subject) {
+  const shares = await prisma.folderShare.findMany({
+    where: { ownerId, subject },
+    select: { sharedWithId: true },
+  })
+  return [ownerId, ...shares.map(s => s.sharedWithId)]
+}
+
+/**
+ * Push a notebook change to everyone who can see the folder, over the personal
+ * `user_<id>` room each socket already joins. Fire-and-forget: a socket problem
+ * must never fail the request that caused it.
+ *
+ * `actorId` travels with the event so a client can ignore the echo of its own
+ * edit rather than overwriting what the user is still typing.
+ */
+export function emitFolderEvent(io, { ownerId, subject, actorId, event, payload = {} }) {
+  if (!io || !ownerId || !subject) return
+  folderAudience(ownerId, subject)
+    .then(userIds => {
+      const body = { ownerId, subject, actorId, ...payload }
+      userIds.forEach(uid => io.to(`user_${uid}`).emit(event, body))
+    })
+    .catch(err => console.error('⚠️ Notebook folder event failed:', err.message))
+}

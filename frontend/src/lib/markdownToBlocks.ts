@@ -1,16 +1,19 @@
-// Converts assistant markdown replies into the Notebook's plain-text block
-// vocabulary (heading | text | bullet | checklist | divider). Rich constructs
-// degrade to readable equivalents instead of leaking raw syntax:
+// Converts assistant markdown replies into the Notebook's block vocabulary.
+// Constructs map to the block that reads closest, and anything without a home
+// degrades to text rather than leaking raw syntax:
+//   - # / ## …    → heading / subheading
+//   - > quote     → quote block, or a callout when tagged ([!TIP], [!WARNING])
+//   - code fences → code block, kept verbatim
+//   - 1. item     → numbered list
 //   - tables      → one bullet per row, cells paired with their column header
-//   - callouts    → labeled text blocks ("⚠️ Caution: …", "💡 Study tip: …")
-//   - blockquotes → plain text without the > markers
-//   - code fences → plain text with the ``` fence lines dropped
 //   - inline **bold** / ==highlight== / `code` markers are stripped
 // Used by the assistant's "Save to Notebook" and the notebook's "Add note
 // from AI" — keep both flows on this single implementation.
 
 export interface NoteBlockInput {
-  type: 'heading' | 'text' | 'bullet' | 'checklist' | 'divider';
+  type:
+    | 'heading' | 'subheading' | 'text' | 'bullet' | 'numbered'
+    | 'checklist' | 'quote' | 'callout' | 'code' | 'divider';
   text: string;
   checked?: boolean;
 }
@@ -52,7 +55,7 @@ export function markdownToBlocks(markdown: string): NoteBlockInput[] {
       continue;
     }
 
-    // Fenced code block → plain text block, code kept verbatim, fences dropped
+    // Fenced code block → code block, contents verbatim, fences dropped
     if (line.startsWith('```')) {
       flushText();
       i++;
@@ -63,7 +66,7 @@ export function markdownToBlocks(markdown: string): NoteBlockInput[] {
       }
       i++; // skip the closing fence (harmless if it was missing)
       const content = codeLines.join('\n').trim();
-      if (content) blocks.push({ type: 'text', text: content });
+      if (content) blocks.push({ type: 'code', text: content });
       continue;
     }
 
@@ -92,7 +95,7 @@ export function markdownToBlocks(markdown: string): NoteBlockInput[] {
       continue;
     }
 
-    // Callout / blockquote → labeled plain-text block
+    // Blockquote → quote block; a tagged one ([!TIP] …) becomes a callout
     if (line.startsWith('>')) {
       flushText();
       const quoteLines: string[] = [];
@@ -104,16 +107,19 @@ export function markdownToBlocks(markdown: string): NoteBlockInput[] {
       const marker = joined.match(/^\[!(\w+)\]\s*/);
       const label = marker ? CALLOUT_LABELS[marker[1].toUpperCase()] : undefined;
       const content = stripInline(joined.replace(/^\[!(\w+)\]\s*/, ''));
-      if (content) blocks.push({ type: 'text', text: label ? `${label}: ${content}` : content });
-      else if (label) blocks.push({ type: 'text', text: label });
+      if (label) blocks.push({ type: 'callout', text: content ? `${label}: ${content}` : label });
+      else if (content) blocks.push({ type: 'quote', text: content });
       continue;
     }
 
-    // Headings: # … ####
-    const heading = line.match(/^#{1,4}\s+(.*)$/);
+    // Headings: # is the section title, deeper levels are subheadings
+    const heading = line.match(/^(#{1,4})\s+(.*)$/);
     if (heading) {
       flushText();
-      blocks.push({ type: 'heading', text: stripInline(heading[1]) });
+      blocks.push({
+        type: heading[1].length === 1 ? 'heading' : 'subheading',
+        text: stripInline(heading[2]),
+      });
       i++;
       continue;
     }
@@ -143,8 +149,17 @@ export function markdownToBlocks(markdown: string): NoteBlockInput[] {
       continue;
     }
 
-    // Bullet points: - item, * item, • item, or numbered "1. item" / "1) item"
-    const bullet = line.match(/^[-*•]\s+(.*)$/) || line.match(/^\d+[.)]\s+(.*)$/);
+    // Ordered steps: "1. item" / "1) item"
+    const numbered = line.match(/^\d+[.)]\s+(.*)$/);
+    if (numbered) {
+      flushText();
+      blocks.push({ type: 'numbered', text: stripInline(numbered[1]) });
+      i++;
+      continue;
+    }
+
+    // Bullet points: - item, * item, • item
+    const bullet = line.match(/^[-*•]\s+(.*)$/);
     if (bullet) {
       flushText();
       blocks.push({ type: 'bullet', text: stripInline(bullet[1]) });

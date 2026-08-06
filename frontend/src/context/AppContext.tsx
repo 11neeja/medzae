@@ -3,8 +3,12 @@
 import { createContext, useContext, ReactNode } from 'react';
 import { createNoteAPI } from '@/lib/api';
 
+// The notebook's block vocabulary — kept in step with markdownToBlocks, which
+// is what feeds this in the AI save flows.
 interface NoteBlock {
-  type: 'heading' | 'text' | 'bullet' | 'checklist' | 'divider';
+  type:
+    | 'heading' | 'subheading' | 'text' | 'bullet' | 'numbered'
+    | 'checklist' | 'quote' | 'callout' | 'code' | 'divider';
   text: string;
   checked?: boolean;
 }
@@ -24,21 +28,19 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  // Throws on failure — callers show a toast, so swallowing the error here
+  // would report a save that never happened.
   const addNote = async (note: AddNoteParams) => {
-    try {
-      const blocks = note.blocks && note.blocks.length > 0
-        ? note.blocks
-        : [{ type: 'text' as const, text: note.content || '' }];
+    const blocks = note.blocks && note.blocks.length > 0
+      ? note.blocks
+      : [{ type: 'text' as const, text: note.content || '' }];
 
-      await createNoteAPI({
-        title: note.title,
-        subject: note.subject,
-        blocks,
-        tags: note.tags || ['AI Assistant'],
-      });
-    } catch (err) {
-      console.error('Failed to save note:', err);
-    }
+    await createNoteAPI({
+      title: note.title,
+      subject: note.subject,
+      blocks,
+      tags: note.tags || ['AI Assistant'],
+    });
   };
 
   return (

@@ -1,7 +1,7 @@
 import prisma from '../config/prisma.js'
 import { removeUploadedFile } from '../utils/storage.js'
 import { createAndEmitNotification } from '../utils/notification.js'
-import { getFolderShare, canEditFolder, resolveFolderOwner } from '../utils/folderShare.js'
+import { getFolderShare, canEditFolder, resolveFolderOwner, emitFolderEvent } from '../utils/folderShare.js'
 
 // @desc    Get all subjects for logged-in user
 // @route   GET /api/notes/subjects
@@ -193,6 +193,14 @@ export const shareSubject = async (req, res) => {
       },
     })
 
+    // The recipient's sidebar picks the folder up without a reload.
+    emitFolderEvent(req.app.get('io'), {
+      ownerId: req.user.id,
+      subject,
+      actorId: req.user.id,
+      event: 'notebook:access-changed',
+    })
+
     // Let the recipient know, in-app + real-time.
     try {
       const io = req.app.get('io')
@@ -249,6 +257,26 @@ export const revokeSubjectShare = async (req, res) => {
     await prisma.folderShare.deleteMany({
       where: { ownerId: req.user.id, subject, sharedWithId: req.params.userId },
     })
+
+    const io = req.app.get('io')
+    emitFolderEvent(io, {
+      ownerId: req.user.id,
+      subject,
+      actorId: req.user.id,
+      event: 'notebook:access-changed',
+    })
+    // The share row is gone, so the person who lost access is no longer part of
+    // the folder's audience — tell them directly or their sidebar keeps a folder
+    // they can no longer open.
+    if (io) {
+      io.to(`user_${req.params.userId}`).emit('notebook:access-changed', {
+        ownerId: req.user.id,
+        subject,
+        actorId: req.user.id,
+        revoked: true,
+      })
+    }
+
     res.json({ message: 'Access revoked' })
   } catch (error) {
     res.status(500).json({ message: error.message })
@@ -273,6 +301,21 @@ export const getSharedSubjects = async (req, res) => {
         ownerEmail: s.owner.email,
       }))
     )
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+// @desc    How many people each of my own folders is shared with
+// @route   GET /api/notes/shares/mine
+export const getMyFolderShares = async (req, res) => {
+  try {
+    const grouped = await prisma.folderShare.groupBy({
+      by: ['subject'],
+      where: { ownerId: req.user.id },
+      _count: { _all: true },
+    })
+    res.json(grouped.map(g => ({ subject: g.subject, count: g._count._all })))
   } catch (error) {
     res.status(500).json({ message: error.message })
   }
@@ -335,11 +378,19 @@ export const createNote = async (req, res) => {
       },
       include: { blocks: { orderBy: { order: 'asc' } } },
     })
-    res.status(201).json({
+    const payload = {
       ...note,
       _id: note.id,
       blocks: (note.blocks || []).map(b => ({ ...b, _id: b.id })),
+    }
+    emitFolderEvent(req.app.get('io'), {
+      ownerId: note.userId,
+      subject: note.subject,
+      actorId: req.user.id,
+      event: 'notebook:note-saved',
+      payload: { note: payload },
     })
+    res.status(201).json(payload)
   } catch (error) {
     res.status(500).json({ message: error.message })
   }
@@ -363,30 +414,51 @@ export const updateNote = async (req, res) => {
     if (subject !== undefined) updateData.subject = subject
     if (tags !== undefined) updateData.tags = tags
 
-    // If blocks are provided, replace them
-    if (blocks !== undefined) {
-      await prisma.noteBlock.deleteMany({ where: { noteId: req.params.id } })
-      updateData.blocks = {
-        create: blocks.map((b, i) => ({
-          type: b.type,
-          text: b.text || '',
-          checked: b.checked || false,
-          order: i,
-        })),
-      }
-    }
+    // A save replaces the whole block list, so two of them running at once used
+    // to interleave — both would clear the blocks, then both would insert their
+    // own copy, leaving the note with every block twice. Locking the note row
+    // first makes concurrent saves queue up: the second one deletes what the
+    // first inserted instead of racing it.
+    const note = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Note" WHERE id = ${req.params.id} FOR UPDATE`
 
-    const note = await prisma.note.update({
-      where: { id: req.params.id },
-      data: updateData,
-      include: { blocks: { orderBy: { order: 'asc' } } },
+      if (blocks !== undefined) {
+        await tx.noteBlock.deleteMany({ where: { noteId: req.params.id } })
+        updateData.blocks = {
+          create: blocks.map((b, i) => ({
+            type: b.type,
+            text: b.text || '',
+            checked: b.checked || false,
+            order: i,
+          })),
+        }
+      }
+
+      return tx.note.update({
+        where: { id: req.params.id },
+        data: updateData,
+        include: { blocks: { orderBy: { order: 'asc' } } },
+      })
     })
-    res.json({
+
+    const payload = {
       ...note,
       _id: note.id,
       blocks: (note.blocks || []).map(b => ({ ...b, _id: b.id })),
+    }
+    // Everyone else with the folder open sees the edit without reloading.
+    emitFolderEvent(req.app.get('io'), {
+      ownerId: note.userId,
+      subject: note.subject,
+      actorId: req.user.id,
+      event: 'notebook:note-saved',
+      payload: { note: payload },
     })
+    res.json(payload)
   } catch (error) {
+    // The note was deleted between the access check and the write — a save
+    // racing a delete, not a server fault.
+    if (error.code === 'P2025') return res.status(404).json({ message: 'Note not found' })
     res.status(500).json({ message: error.message })
   }
 }
@@ -429,6 +501,13 @@ export const deleteNote = async (req, res) => {
     }
     // Blocks cascade-delete via onDelete: Cascade
     await prisma.note.delete({ where: { id: req.params.id } })
+    emitFolderEvent(req.app.get('io'), {
+      ownerId: note.userId,
+      subject: note.subject,
+      actorId: req.user.id,
+      event: 'notebook:note-removed',
+      payload: { noteId: note.id },
+    })
     res.json({ message: 'Note deleted' })
   } catch (error) {
     res.status(500).json({ message: error.message })

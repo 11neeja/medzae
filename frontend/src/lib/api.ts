@@ -207,6 +207,13 @@ export const getSharedFoldersAPI = async (): Promise<SharedFolder[]> => {
   return res.data
 }
 
+// My own folders that are shared out, with how many people each reaches — the
+// sidebar marks those folders so sharing is visible without opening a dialog.
+export const getMyFolderSharesAPI = async (): Promise<{ subject: string; count: number }[]> => {
+  const res = await api.get('/notes/shares/mine')
+  return res.data
+}
+
 // Share one of my folders with a user (picked from the user search).
 export const shareSubjectAPI = async (
   subject: string,

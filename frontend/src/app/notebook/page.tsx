@@ -2,19 +2,26 @@
 
 import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import {
-  FolderOpen, Folder, FileText, Search, Trash2, CheckSquare, BookOpen,
-  Upload, Eye, X, Inbox, PenLine, Bot, Tag, Heading, Type, List, Minus,
+  FolderOpen, Folder, FileText, Search, Trash2, BookOpen,
+  Upload, Eye, X, Inbox, PenLine, Bot, Tag,
   Paperclip, Presentation, FileEdit, Calendar, Loader2, Plus, FolderPlus,
   Image, Table, File, Pencil, ChevronUp, ChevronDown, Download,
-  ArrowLeft, Wrench, Share2, Users, Lock
+  ArrowLeft, Wrench, Share2, Users, Lock, Lightbulb
 } from 'lucide-react';
-import { getNotesAPI, createNoteAPI, updateNoteAPI, deleteNoteAPI, getTasksAPI, createTaskAPI, toggleTaskAPI, deleteTaskAPI, getSubjectsAPI, createSubjectAPI, renameSubjectAPI, deleteSubjectAPI, getDocumentsAPI, uploadDocumentAPI, downloadDocumentAPI, deleteDocumentAPI, getAiMessagesAPI, reorderNotesAPI, getSharedFoldersAPI, shareSubjectAPI, getSubjectSharesAPI, revokeSubjectShareAPI, searchUsersAPI, type SharedFolder, type FolderPermission, type FolderShareEntry } from '@/lib/api';
+import { getNotesAPI, createNoteAPI, updateNoteAPI, deleteNoteAPI, getTasksAPI, createTaskAPI, toggleTaskAPI, deleteTaskAPI, getSubjectsAPI, createSubjectAPI, renameSubjectAPI, deleteSubjectAPI, getDocumentsAPI, uploadDocumentAPI, downloadDocumentAPI, deleteDocumentAPI, getAiMessagesAPI, reorderNotesAPI, getSharedFoldersAPI, getMyFolderSharesAPI, shareSubjectAPI, getSubjectSharesAPI, revokeSubjectShareAPI, searchUsersAPI, type SharedFolder, type FolderPermission, type FolderShareEntry } from '@/lib/api';
 import ResizableSidebar from '@/components/ResizableSidebar';
 import ConfirmModal from '@/components/ConfirmModal';
+import FolderChoice from '@/components/FolderChoice';
+import BlockInsertMenu, { type BlockType as BlockKind } from '@/components/BlockInsertMenu';
 import { markdownToBlocks } from '@/lib/markdownToBlocks';
+import { useAuth } from '@/context/AuthContext';
+import { io } from 'socket.io-client';
+
+const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:5000';
 
 // Type definitions
-type BlockType = 'heading' | 'text' | 'checklist' | 'bullet' | 'divider';
+// The block vocabulary lives with the picker that inserts them.
+type BlockType = BlockKind;
 
 interface Block {
   id: string;
@@ -143,17 +150,41 @@ function AutoGrowTextarea({
   placeholder,
   singleLine = false,
   readOnly = false,
+  onEnter,
+  onBackspaceEmpty,
+  autoFocus = false,
+  onFocused,
 }: {
   value: string;
   onChange: (value: string) => void;
   className?: string;
   placeholder?: string;
-  /** Titles, headings and list items wrap but never take a hard line break. */
+  /** The page title takes no line breaks at all — Enter just commits it. */
   singleLine?: boolean;
   /** View-only shared folders render their text without letting you edit it. */
   readOnly?: boolean;
+  /** Enter (without Shift) — blocks use it to start the next one. */
+  onEnter?: () => void;
+  /** Backspace with the caret at the start of an empty field. */
+  onBackspaceEmpty?: () => void;
+  /** Take the caret when a block is created or exposed by a deletion. */
+  autoFocus?: boolean;
+  onFocused?: () => void;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+
+  // A block that was just inserted (or the one left behind by a delete) should
+  // be ready to type into, caret at the end.
+  useEffect(() => {
+    if (!autoFocus) return;
+    const el = ref.current;
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    el.setSelectionRange(el.value.length, el.value.length);
+    onFocused?.();
+    // onFocused is a fresh closure each render; re-running on it would loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoFocus]);
 
   const fitToContent = useCallback(() => {
     const el = ref.current;
@@ -189,9 +220,32 @@ function AutoGrowTextarea({
       readOnly={readOnly}
       onChange={(e) => { if (!readOnly) onChange(e.target.value); }}
       onKeyDown={(e) => {
-        if (singleLine && e.key === 'Enter') {
+        if (readOnly) return;
+
+        if (e.key === 'Enter') {
+          // Shift+Enter is always a soft line break inside the block.
+          if (e.shiftKey && !singleLine) return;
+          if (onEnter) {
+            e.preventDefault();
+            onEnter();
+          } else if (singleLine) {
+            e.preventDefault();
+            e.currentTarget.blur();
+          }
+          // Otherwise it's a multi-line field (a formula) — let it break.
+          return;
+        }
+
+        // Backspace on an empty block removes it and hands the caret back.
+        if (
+          e.key === 'Backspace' &&
+          onBackspaceEmpty &&
+          value === '' &&
+          e.currentTarget.selectionStart === 0 &&
+          e.currentTarget.selectionEnd === 0
+        ) {
           e.preventDefault();
-          e.currentTarget.blur();
+          onBackspaceEmpty();
         }
       }}
       className={`nb-textarea ${className}`}
@@ -200,11 +254,20 @@ function AutoGrowTextarea({
 }
 
 export default function NotebookPage() {
+  const { user, isAuthenticated } = useAuth();
   const [pages, setPages] = useState<NotePage[]>([]);
   const [selectedPage, setSelectedPage] = useState<NotePage | null>(null);
   const [selectedSubject, setSelectedSubject] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [showBlockMenu, setShowBlockMenu] = useState(false);
+  // Open block picker: where it hangs from, the element that opened it, and the
+  // block to convert when it was summoned by typing "/" into an empty block.
+  const [blockMenu, setBlockMenu] = useState<
+    { rect: DOMRect; anchorEl: HTMLElement | null; replaceBlockId?: string; afterBlockId?: string } | null
+  >(null);
+  const addBlockBtnRef = useRef<HTMLButtonElement>(null);
+  // Block that should take the caret on the next render (just inserted, or the
+  // one a deletion left behind).
+  const [focusBlockId, setFocusBlockId] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -220,6 +283,9 @@ export default function NotebookPage() {
   const [deleteSubjectTarget, setDeleteSubjectTarget] = useState<string | null>(null);
   const [deletePageTarget, setDeletePageTarget] = useState<NotePage | null>(null);
   const [showAiPicker, setShowAiPicker] = useState(false);
+  // Folder the next AI response gets filed under — an existing one or a name
+  // typed into the picker, which is created on save.
+  const [aiTargetFolder, setAiTargetFolder] = useState('AI Assistant');
   const [aiMessages, setAiMessages] = useState<{ id: string; sender: string; text: string; createdAt: string; question: string }[]>([]);
   const [isLoadingAi, setIsLoadingAi] = useState(false);
   // Mobile-only view switcher: 'list' = subjects/pages, 'editor' = page editor, 'tools' = tasks/documents.
@@ -234,6 +300,9 @@ export default function NotebookPage() {
   // I'm browsing my own folders). Shared content lives in its own arrays so it
   // never collides by name with a folder of mine.
   const [sharedFolders, setSharedFolders] = useState<SharedFolder[]>([]);
+  // Folders of mine that are shared out, keyed by folder name → headcount. Drives
+  // the sidebar and filing-panel markers so sharing is visible at a glance.
+  const [sharedByMe, setSharedByMe] = useState<Record<string, number>>({});
   const [activeShare, setActiveShare] = useState<SharedFolder | null>(null);
   const [sharedPages, setSharedPages] = useState<NotePage[]>([]);
   const [sharedTasks, setSharedTasks] = useState<Task[]>([]);
@@ -254,6 +323,71 @@ export default function NotebookPage() {
   const [shareSearchQuery, setShareSearchQuery] = useState('');
   const [shareSearchResults, setShareSearchResults] = useState<{ id: string; name: string; email: string; role?: string }[]>([]);
   const [shareSearching, setShareSearching] = useState(false);
+
+  // ─── Note saving ─────────────────────────────────────────────────
+  // A save sends the note's whole block list, so two of them in flight at once
+  // can land out of order and leave the note duplicated or truncated. Keep at
+  // most one request per note in the air, coalesce whatever arrives while it
+  // runs, and debounce typing so a sentence is one save instead of thirty.
+  const SAVE_DEBOUNCE_MS = 500;
+  type NoteSavePatch = { title?: string; blocks?: Block[] };
+  const saveState = useRef(new Map<string, { inFlight: boolean; pending: NoteSavePatch | null }>());
+  const saveTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  // When I last typed — a remote edit shouldn't yank the page out from under me.
+  const localEditAt = useRef(0);
+
+  const flushNoteSave = useCallback(async (noteId: string) => {
+    const entry = saveState.current.get(noteId);
+    if (!entry || entry.inFlight || !entry.pending) return;
+    const patch = entry.pending;
+    entry.pending = null;
+    entry.inFlight = true;
+    try {
+      await updateNoteAPI(noteId, patch);
+    } catch (err) {
+      console.error('Failed to save note:', err);
+    } finally {
+      entry.inFlight = false;
+      if (entry.pending) flushNoteSave(noteId);
+    }
+  }, []);
+
+  // `immediate` is for structural edits (adding, deleting, ticking a block),
+  // where waiting out the debounce would feel broken.
+  const queueNoteSave = useCallback((noteId: string, patch: NoteSavePatch, immediate = false) => {
+    const entry = saveState.current.get(noteId) || { inFlight: false, pending: null };
+    entry.pending = { ...(entry.pending || {}), ...patch };
+    saveState.current.set(noteId, entry);
+    localEditAt.current = Date.now();
+
+    const timer = saveTimers.current.get(noteId);
+    if (timer) clearTimeout(timer);
+    if (immediate) {
+      flushNoteSave(noteId);
+      return;
+    }
+    saveTimers.current.set(noteId, setTimeout(() => flushNoteSave(noteId), SAVE_DEBOUNCE_MS));
+  }, [flushNoteSave]);
+
+  // Drop queued work for a note that no longer exists.
+  const cancelNoteSave = useCallback((noteId: string) => {
+    const timer = saveTimers.current.get(noteId);
+    if (timer) clearTimeout(timer);
+    saveTimers.current.delete(noteId);
+    saveState.current.delete(noteId);
+  }, []);
+
+  // Don't let a debounced keystroke die with the page.
+  useEffect(() => {
+    const timers = saveTimers.current;
+    return () => {
+      timers.forEach((timer, noteId) => {
+        clearTimeout(timer);
+        flushNoteSave(noteId);
+      });
+      timers.clear();
+    };
+  }, [flushNoteSave]);
 
   // Route note/task/document state updates to the shared arrays while a shared
   // folder is open, and to my own arrays otherwise.
@@ -293,14 +427,16 @@ export default function NotebookPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [notesData, tasksData, subjectsData, documentsData, sharedData] = await Promise.all([
+        const [notesData, tasksData, subjectsData, documentsData, sharedData, myShares] = await Promise.all([
           getNotesAPI(),
           getTasksAPI(),
           getSubjectsAPI(),
           getDocumentsAPI('notebook'),
           getSharedFoldersAPI().catch(() => [] as SharedFolder[]),
+          getMyFolderSharesAPI().catch(() => [] as { subject: string; count: number }[]),
         ]);
         setSharedFolders(sharedData || []);
+        setSharedByMe(Object.fromEntries((myShares || []).map(s => [s.subject, s.count])));
         const mappedNotes = notesData
           .filter((n: any) => n.title !== '__subject_placeholder__')
           .map(mapAPINote);
@@ -332,6 +468,125 @@ export default function NotebookPage() {
     fetchData();
   }, []);
 
+  // ─── Live folder updates ─────────────────────────────────────────
+  // A shared folder has more than one pair of hands in it, so changes arrive
+  // over the same socket the chat uses instead of waiting for a reload. The
+  // handlers read the open folder through a ref: the socket is set up once, and
+  // re-subscribing on every state change would drop events mid-flight.
+  const activeShareRef = useRef<SharedFolder | null>(null);
+  useEffect(() => { activeShareRef.current = activeShare; }, [activeShare]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user?._id) return;
+    const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+    if (!token) return;
+
+    const socket = io(SOCKET_URL, { auth: { token }, transports: ['websocket', 'polling'] });
+    const myId = user._id;
+
+    // Which list a folder's items belong in: my own arrays, the open shared
+    // folder's arrays, or nowhere (a shared folder I'm not looking at — it
+    // loads fresh when I open it).
+    const targetOf = (ownerId: string, subject: string): 'own' | 'shared' | null => {
+      if (ownerId === myId) return 'own';
+      const open = activeShareRef.current;
+      return open && open.ownerId === ownerId && open.subject === subject ? 'shared' : null;
+    };
+
+    socket.on('notebook:note-saved', ({ ownerId, subject, actorId, note }: any) => {
+      if (actorId === myId) return;
+      const target = targetOf(ownerId, subject);
+      if (!target) return;
+      const incoming = mapAPINote(note);
+      const merge = (prev: NotePage[]) =>
+        prev.some(p => p.id === incoming.id)
+          ? prev.map(p => (p.id === incoming.id ? incoming : p))
+          : [...prev, incoming];
+      (target === 'own' ? setPages : setSharedPages)(merge);
+      // Only refresh the open editor once my own typing has settled, so a
+      // collaborator's save can't swallow a half-written sentence.
+      setSelectedPage(prev =>
+        prev?.id === incoming.id && Date.now() - localEditAt.current > 2000 ? incoming : prev
+      );
+    });
+
+    socket.on('notebook:note-removed', ({ ownerId, subject, actorId, noteId }: any) => {
+      if (actorId === myId) return;
+      const target = targetOf(ownerId, subject);
+      if (!target) return;
+      (target === 'own' ? setPages : setSharedPages)(prev => prev.filter(p => p.id !== noteId));
+      setSelectedPage(prev => (prev?.id === noteId ? null : prev));
+    });
+
+    socket.on('notebook:task-saved', ({ ownerId, subject, actorId, task }: any) => {
+      if (actorId === myId) return;
+      const target = targetOf(ownerId, subject);
+      if (!target) return;
+      const incoming = mapAPITask(task);
+      (target === 'own' ? setTasks : setSharedTasks)(prev =>
+        prev.some(t => t.id === incoming.id)
+          ? prev.map(t => (t.id === incoming.id ? incoming : t))
+          : [...prev, incoming]
+      );
+    });
+
+    socket.on('notebook:task-removed', ({ ownerId, subject, actorId, taskId }: any) => {
+      if (actorId === myId) return;
+      const target = targetOf(ownerId, subject);
+      if (!target) return;
+      (target === 'own' ? setTasks : setSharedTasks)(prev => prev.filter(t => t.id !== taskId));
+    });
+
+    socket.on('notebook:doc-saved', ({ ownerId, subject, actorId, document: doc }: any) => {
+      if (actorId === myId) return;
+      const target = targetOf(ownerId, subject);
+      if (!target) return;
+      const incoming: UploadedFile = {
+        id: doc._id,
+        name: doc.name,
+        type: doc.type,
+        uploadedAt: new Date(doc.createdAt).toISOString().split('T')[0],
+        subject: doc.subject ?? null,
+      };
+      (target === 'own' ? setUploadedFiles : setSharedFiles)(prev =>
+        prev.some(f => f.id === incoming.id) ? prev : [...prev, incoming]
+      );
+    });
+
+    socket.on('notebook:doc-removed', ({ ownerId, subject, actorId, documentId }: any) => {
+      if (actorId === myId) return;
+      const target = targetOf(ownerId, subject);
+      if (!target) return;
+      (target === 'own' ? setUploadedFiles : setSharedFiles)(prev => prev.filter(f => f.id !== documentId));
+      setPreviewDocument(prev => (prev?.id === documentId ? null : prev));
+    });
+
+    // Someone shared a folder with me, changed my access, or took it away.
+    socket.on('notebook:access-changed', async ({ ownerId, subject, revoked }: any) => {
+      try {
+        const [mine, incoming] = await Promise.all([
+          getMyFolderSharesAPI().catch(() => [] as { subject: string; count: number }[]),
+          getSharedFoldersAPI().catch(() => [] as SharedFolder[]),
+        ]);
+        setSharedByMe(Object.fromEntries((mine || []).map(s => [s.subject, s.count])));
+        setSharedFolders(incoming || []);
+        // Close a folder I'm reading that I no longer have access to.
+        if (revoked && activeShareRef.current?.ownerId === ownerId && activeShareRef.current?.subject === subject) {
+          setActiveShare(null);
+          setSharedPages([]);
+          setSharedTasks([]);
+          setSharedFiles([]);
+          setSelectedPage(null);
+          setSelectedSubject('');
+        }
+      } catch (err) {
+        console.error('Failed to refresh folder access:', err);
+      }
+    });
+
+    return () => { socket.disconnect(); };
+  }, [isAuthenticated, user?._id]);
+
   // Filter pages by search query
   const filteredPages = pages.filter(page =>
     page.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -350,6 +605,8 @@ export default function NotebookPage() {
   // Tasks and documents live inside a folder. A shared folder shows only its own;
   // with no folder open there is nothing to scope to, so everything is shown.
   const isFolderScoped = !!activeShare || (toolScope === 'folder' && !!selectedSubject);
+  // How many people the open folder of mine reaches — shown in the filing panel.
+  const openFolderShareCount = !activeShare && selectedSubject ? sharedByMe[selectedSubject] || 0 : 0;
   const visibleTasks = activeShare
     ? sharedTasks
     : isFolderScoped
@@ -404,6 +661,25 @@ export default function NotebookPage() {
   };
 
   // ─── Share dialog ────────────────────────────────────────────────
+  // Keep the sidebar/filing markers in step with the dialog. A folder with no
+  // one left on it drops out of the map entirely.
+  const markSharedCount = (subject: string, count: number) =>
+    setSharedByMe(prev => {
+      const next = { ...prev };
+      if (count > 0) next[subject] = count;
+      else delete next[subject];
+      return next;
+    });
+
+  // Shares key off the folder name, so they follow a rename like everything else.
+  const renameSharedKey = (oldName: string, newName: string) =>
+    setSharedByMe(prev => {
+      if (prev[oldName] === undefined) return prev;
+      const next = { ...prev, [newName]: prev[oldName] };
+      delete next[oldName];
+      return next;
+    });
+
   const openShareDialog = async (subject: string) => {
     setShareTarget(subject);
     setSharePermission('view');
@@ -413,7 +689,9 @@ export default function NotebookPage() {
     setExistingShares([]);
     setLoadingShares(true);
     try {
-      setExistingShares(await getSubjectSharesAPI(subject));
+      const shares = await getSubjectSharesAPI(subject);
+      setExistingShares(shares);
+      markSharedCount(subject, shares.length);
     } catch (err) {
       console.error('Failed to load folder shares:', err);
     } finally {
@@ -447,7 +725,9 @@ export default function NotebookPage() {
     try {
       const entry = await shareSubjectAPI(shareTarget, user.id, sharePermission);
       // Replace any existing entry for this user, then append.
-      setExistingShares(prev => [...prev.filter(s => s.user.id !== entry.user.id), entry]);
+      const next = [...existingShares.filter(s => s.user.id !== entry.user.id), entry];
+      setExistingShares(next);
+      markSharedCount(shareTarget, next.length);
       setShareSearchQuery('');
       setShareSearchResults([]);
     } catch (err: any) {
@@ -461,7 +741,9 @@ export default function NotebookPage() {
     if (!shareTarget) return;
     try {
       await revokeSubjectShareAPI(shareTarget, userId);
-      setExistingShares(prev => prev.filter(s => s.user.id !== userId));
+      const next = existingShares.filter(s => s.user.id !== userId);
+      setExistingShares(next);
+      markSharedCount(shareTarget, next.length);
     } catch (err) {
       console.error('Failed to revoke share:', err);
     }
@@ -478,13 +760,21 @@ export default function NotebookPage() {
     ));
     setSelectedPage({ ...selectedPage, title: newTitle });
 
-    // Save to database (debounced effect would be ideal, but simple save here)
-    updateNoteAPI(selectedPage.id, { title: newTitle }).catch(console.error);
+    queueNoteSave(selectedPage.id, { title: newTitle });
   };
 
   // Update block text (auto-saves to database)
   const updateBlockText = (blockId: string, newText: string) => {
     if (!selectedPage || !canEdit) return;
+
+    // Typing "/" on its own opens the picker over that block, and whatever is
+    // chosen replaces it — the shortcut the placeholder has always promised.
+    if (newText === '/') {
+      const el = document.getElementById(`nb-block-${blockId}`);
+      if (el) {
+        setBlockMenu({ rect: el.getBoundingClientRect(), anchorEl: el, replaceBlockId: blockId });
+      }
+    }
 
     const updatedBlocks = selectedPage.blocks.map(b =>
       b.id === blockId ? { ...b, text: newText } : b
@@ -495,8 +785,7 @@ export default function NotebookPage() {
     patchPages(prev => prev.map(p => p.id === selectedPage.id ? updatedPage : p));
     setSelectedPage(updatedPage);
 
-    // Save blocks to database
-    updateNoteAPI(selectedPage.id, { blocks: updatedBlocks }).catch(console.error);
+    queueNoteSave(selectedPage.id, { blocks: updatedBlocks });
   };
 
   // Toggle checklist (auto-saves to database)
@@ -512,21 +801,48 @@ export default function NotebookPage() {
     patchPages(prev => prev.map(p => p.id === selectedPage.id ? updatedPage : p));
     setSelectedPage(updatedPage);
 
-    updateNoteAPI(selectedPage.id, { blocks: updatedBlocks }).catch(console.error);
+    queueNoteSave(selectedPage.id, { blocks: updatedBlocks }, true);
   };
 
-  // Add new block (saved to database)
-  const addBlock = (type: BlockType) => {
+  // Insert a block: appended, dropped in after a given block, or in place of
+  // the one that opened the picker with "/". New blocks start empty so the
+  // per-type placeholder shows through, and take the caret straight away.
+  const addBlock = (
+    type: BlockType,
+    target?: { replaceId?: string; afterId?: string }
+  ) => {
     if (!selectedPage || !canEdit) return;
 
-    const newBlock: Block = {
-      id: `b${Date.now()}`,
+    const blank = (): Block => ({
+      id: `b${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       type,
-      text: type === 'divider' ? '' : `New ${type}...`,
+      text: '',
       checked: type === 'checklist' ? false : undefined,
-    };
+    });
 
-    const updatedBlocks = [...selectedPage.blocks, newBlock];
+    let updatedBlocks: Block[];
+    if (target?.replaceId) {
+      updatedBlocks = selectedPage.blocks.map(b =>
+        b.id === target.replaceId
+          ? { ...b, type, text: '', checked: type === 'checklist' ? false : undefined }
+          : b
+      );
+      setFocusBlockId(target.replaceId);
+    } else if (target?.afterId) {
+      const at = selectedPage.blocks.findIndex(b => b.id === target.afterId);
+      const fresh = blank();
+      updatedBlocks = [
+        ...selectedPage.blocks.slice(0, at + 1),
+        fresh,
+        ...selectedPage.blocks.slice(at + 1),
+      ];
+      setFocusBlockId(fresh.id);
+    } else {
+      const fresh = blank();
+      updatedBlocks = [...selectedPage.blocks, fresh];
+      setFocusBlockId(fresh.id);
+    }
+
     const updatedPage = {
       ...selectedPage,
       blocks: updatedBlocks,
@@ -535,9 +851,36 @@ export default function NotebookPage() {
 
     patchPages(prev => prev.map(p => p.id === selectedPage.id ? updatedPage : p));
     setSelectedPage(updatedPage);
-    setShowBlockMenu(false);
+    setBlockMenu(null);
 
-    updateNoteAPI(selectedPage.id, { blocks: updatedBlocks }).catch(console.error);
+    queueNoteSave(selectedPage.id, { blocks: updatedBlocks }, true);
+  };
+
+  // Enter starts the next block. Lists keep going in their own kind; anything
+  // else hands off to plain text, which is what you almost always want after a
+  // heading or a pull quote.
+  const CONTINUES_AS: Partial<Record<BlockType, BlockType>> = {
+    bullet: 'bullet',
+    numbered: 'numbered',
+    checklist: 'checklist',
+    text: 'text',
+  };
+
+  const continueFromBlock = (block: Block) => {
+    addBlock(CONTINUES_AS[block.type] || 'text', { afterId: block.id });
+  };
+
+  // Backspace in an empty block deletes it and puts the caret at the end of the
+  // one above — the standard way out of a block you didn't want.
+  const removeBlockBackwards = (blockId: string) => {
+    if (!selectedPage || !canEdit) return;
+    const at = selectedPage.blocks.findIndex(b => b.id === blockId);
+    if (at < 0) return;
+    // Never delete the last block standing; the page would have nothing to type in.
+    if (selectedPage.blocks.length === 1) return;
+    const previous = selectedPage.blocks[at - 1];
+    deleteBlock(blockId);
+    if (previous) setFocusBlockId(previous.id);
   };
 
   // Delete block (saved to database)
@@ -550,7 +893,7 @@ export default function NotebookPage() {
     patchPages(prev => prev.map(p => p.id === selectedPage.id ? updatedPage : p));
     setSelectedPage(updatedPage);
 
-    updateNoteAPI(selectedPage.id, { blocks: updatedBlocks }).catch(console.error);
+    queueNoteSave(selectedPage.id, { blocks: updatedBlocks }, true);
   };
 
   // Create new page (saved to database)
@@ -758,6 +1101,9 @@ export default function NotebookPage() {
   // Open AI picker modal - fetches latest AI messages
   const openAiPicker = async () => {
     setShowAiPicker(true);
+    // Default to the folder already open (a shared one isn't mine to file in),
+    // falling back to the AI's own folder.
+    setAiTargetFolder(!activeShare && selectedSubject ? selectedSubject : 'AI Assistant');
     setIsLoadingAi(true);
     try {
       const saved = await getAiMessagesAPI();
@@ -801,29 +1147,25 @@ export default function NotebookPage() {
     try {
       const parsedBlocks = markdownToBlocks(message.text);
       const title = message.question || `AI Response - ${new Date().toLocaleDateString()}`;
-
-      // Ensure 'AI Assistant' subject exists in sidebar
-      if (!subjects.includes('AI Assistant')) {
-        try {
-          await createSubjectAPI('AI Assistant');
-        } catch (_) {
-          // Subject may already exist in DB — that's fine
-        }
-        // Always add to local state so it shows in sidebar
-        setSubjects(prev => prev.includes('AI Assistant') ? prev : [...prev, 'AI Assistant']);
-      }
+      // Whatever the picker had selected — an existing folder or a new name.
+      const folder = aiTargetFolder.trim();
+      if (!folder) return;
 
       const apiNote = await createNoteAPI({
         title,
-        subject: 'AI Assistant',
+        subject: folder,
         blocks: parsedBlocks,
         tags: ['AI Assistant'],
       });
 
+      // The note itself establishes the folder, so a new name just needs to
+      // join the sidebar list.
+      setSubjects(prev => (prev.includes(folder) ? prev : [...prev, folder]));
+
       const newPage = mapAPINote(apiNote);
       setPages(prev => [...prev, newPage]);
       setActiveShare(null);
-      setSelectedSubject('AI Assistant');
+      setSelectedSubject(folder);
       setSelectedPage(newPage);
       setMobileView('editor');
       setShowAiPicker(false);
@@ -929,6 +1271,10 @@ export default function NotebookPage() {
 
               {subjects.map(subject => {
                 const subjectPageCount = filteredPages.filter(p => p.subject === subject).length;
+                const sharedCount = sharedByMe[subject] || 0;
+                const sharedLabel = sharedCount
+                  ? `Shared with ${sharedCount} ${sharedCount === 1 ? 'person' : 'people'}`
+                  : '';
                 const isExpanded = selectedSubject === subject;
                 const isRenaming = renamingSubject === subject;
                 const accent = accentForSubject(subject);
@@ -953,6 +1299,7 @@ export default function NotebookPage() {
                                 setPages(pages.map(p => p.subject === subject ? { ...p, subject: newName } : p));
                                 setTasks(prev => prev.map(t => t.subject === subject ? { ...t, subject: newName } : t));
                                 setUploadedFiles(prev => prev.map(f => f.subject === subject ? { ...f, subject: newName } : f));
+                                renameSharedKey(subject, newName);
                                 if (selectedSubject === subject) setSelectedSubject(newName);
                                 if (selectedPage?.subject === subject) setSelectedPage({ ...selectedPage, subject: newName });
                                 setRenamingSubject(null);
@@ -974,6 +1321,7 @@ export default function NotebookPage() {
                                 setPages(pages.map(p => p.subject === subject ? { ...p, subject: newName } : p));
                                 setTasks(prev => prev.map(t => t.subject === subject ? { ...t, subject: newName } : t));
                                 setUploadedFiles(prev => prev.map(f => f.subject === subject ? { ...f, subject: newName } : f));
+                                renameSharedKey(subject, newName);
                                 if (selectedSubject === subject) setSelectedSubject(newName);
                                 if (selectedPage?.subject === subject) setSelectedPage({ ...selectedPage, subject: newName });
                               } catch (err: any) {
@@ -988,7 +1336,7 @@ export default function NotebookPage() {
                     ) : (
                     <div className="nb-card group/subject" data-active={isExpanded && !activeShare}>
                       <div onClick={() => openOwnedFolder(subject)} className="nb-card-head">
-                        <span className="nb-card-icon">
+                        <span className="nb-card-icon" data-shared={sharedCount > 0}>
                           {isExpanded && !activeShare
                             ? <FolderOpen className="w-3.5 h-3.5" strokeWidth={1.75} />
                             : <Folder className="w-3.5 h-3.5" strokeWidth={1.75} />}
@@ -1002,7 +1350,8 @@ export default function NotebookPage() {
                               openShareDialog(subject);
                             }}
                             className="nb-handle-btn"
-                            title="Share folder"
+                            data-on={sharedCount > 0}
+                            title={sharedCount ? `${sharedLabel} — manage access` : 'Share folder'}
                           >
                             <Share2 className="w-3 h-3" strokeWidth={1.75} />
                           </span>
@@ -1031,6 +1380,11 @@ export default function NotebookPage() {
                             <X className="w-3 h-3" strokeWidth={1.75} />
                           </span>
                         </span>
+                        {sharedCount > 0 && (
+                          <span className="nb-shared-tag group-hover/subject:hidden" title={sharedLabel} aria-label={sharedLabel}>
+                            <Users strokeWidth={2} /> {sharedCount}
+                          </span>
+                        )}
                         <span className="nb-card-count group-hover/subject:hidden">{subjectPageCount}</span>
                         <ChevronDown className="nb-card-chev w-3.5 h-3.5" data-expanded={isExpanded} strokeWidth={2} />
                       </div>
@@ -1147,13 +1501,15 @@ export default function NotebookPage() {
                             </span>
                             <span className="nb-card-title">{sf.subject}</span>
                             <span
-                              className="nb-chip shrink-0 inline-flex items-center gap-1"
-                              title={sf.permission === 'edit' ? 'You can edit this folder' : 'View only'}
+                              className="nb-perm"
+                              data-permission={sf.permission}
+                              title={sf.permission === 'edit' ? `You can edit this folder — shared by ${sf.ownerName}` : `View only — shared by ${sf.ownerName}`}
+                              aria-label={sf.permission === 'edit' ? 'Can edit' : 'View only'}
                             >
                               {sf.permission === 'edit'
-                                ? <Pencil className="w-2.5 h-2.5" strokeWidth={2} />
-                                : <Lock className="w-2.5 h-2.5" strokeWidth={2} />}
-                              {sf.permission === 'edit' ? 'Edit' : 'View'}
+                                ? <Pencil strokeWidth={2.25} />
+                                : <Lock strokeWidth={2.25} />}
+                              <span>{sf.permission === 'edit' ? 'Edit' : 'View'}</span>
                             </span>
                             <ChevronDown className="nb-card-chev w-3.5 h-3.5" data-expanded={isActive} strokeWidth={2} />
                           </div>
@@ -1311,10 +1667,25 @@ export default function NotebookPage() {
 
               {/* Blocks — Notion-style with hover handles */}
               <div className="space-y-1">
-                {selectedPage.blocks.map((block) => (
-                  <div key={block.id} className="nb-block">
+                {selectedPage.blocks.map((block, blockIndex) => (
+                  <div key={block.id} id={`nb-block-${block.id}`} className="nb-block">
                     {canEdit && (
                       <div className="nb-handle">
+                        <span
+                          role="button"
+                          onClick={(e) => {
+                            const el = e.currentTarget;
+                            setBlockMenu({
+                              rect: el.getBoundingClientRect(),
+                              anchorEl: el,
+                              afterBlockId: block.id,
+                            });
+                          }}
+                          className="nb-handle-btn"
+                          title="Insert a block below this one"
+                        >
+                          <Plus className="w-3 h-3" strokeWidth={2} />
+                        </span>
                         <span
                           role="button"
                           onClick={() => deleteBlock(block.id)}
@@ -1332,7 +1703,10 @@ export default function NotebookPage() {
                         onChange={(text) => updateBlockText(block.id, text)}
                         className="nb-h"
                         placeholder="Heading"
-                        singleLine
+                        onEnter={() => continueFromBlock(block)}
+                        onBackspaceEmpty={() => removeBlockBackwards(block.id)}
+                        autoFocus={focusBlockId === block.id}
+                        onFocused={() => setFocusBlockId(null)}
                         readOnly={!canEdit}
                       />
                     )}
@@ -1343,6 +1717,10 @@ export default function NotebookPage() {
                         onChange={(text) => updateBlockText(block.id, text)}
                         className="nb-body"
                         placeholder="Type ‘/’ or just start writing…"
+                        onEnter={() => continueFromBlock(block)}
+                        onBackspaceEmpty={() => removeBlockBackwards(block.id)}
+                        autoFocus={focusBlockId === block.id}
+                        onFocused={() => setFocusBlockId(null)}
                         readOnly={!canEdit}
                       />
                     )}
@@ -1361,10 +1739,27 @@ export default function NotebookPage() {
                           onChange={(text) => updateBlockText(block.id, text)}
                           className={`nb-body flex-1 min-w-0 ${block.checked ? 'line-through text-[var(--color-text-soft)]' : ''}`}
                           placeholder="To-do"
-                          singleLine
+                          onEnter={() => continueFromBlock(block)}
+                          onBackspaceEmpty={() => removeBlockBackwards(block.id)}
+                          autoFocus={focusBlockId === block.id}
+                          onFocused={() => setFocusBlockId(null)}
                           readOnly={!canEdit}
                         />
                       </div>
+                    )}
+
+                    {block.type === 'subheading' && (
+                      <AutoGrowTextarea
+                        value={block.text}
+                        onChange={(text) => updateBlockText(block.id, text)}
+                        className="nb-h2"
+                        placeholder="Subheading"
+                        onEnter={() => continueFromBlock(block)}
+                        onBackspaceEmpty={() => removeBlockBackwards(block.id)}
+                        autoFocus={focusBlockId === block.id}
+                        onFocused={() => setFocusBlockId(null)}
+                        readOnly={!canEdit}
+                      />
                     )}
 
                     {block.type === 'bullet' && (
@@ -1375,7 +1770,86 @@ export default function NotebookPage() {
                           onChange={(text) => updateBlockText(block.id, text)}
                           className="nb-body flex-1 min-w-0"
                           placeholder="List item"
-                          singleLine
+                          onEnter={() => continueFromBlock(block)}
+                          onBackspaceEmpty={() => removeBlockBackwards(block.id)}
+                          autoFocus={focusBlockId === block.id}
+                          onFocused={() => setFocusBlockId(null)}
+                          readOnly={!canEdit}
+                        />
+                      </div>
+                    )}
+
+                    {block.type === 'numbered' && (
+                      <div className="flex items-start gap-3 py-0.5">
+                        {/* Numbering restarts wherever a run of numbered blocks does */}
+                        <span className="nb-num">
+                          {(() => {
+                            let n = 1;
+                            for (let i = blockIndex - 1; i >= 0 && selectedPage.blocks[i].type === 'numbered'; i--) n++;
+                            return `${n}.`;
+                          })()}
+                        </span>
+                        <AutoGrowTextarea
+                          value={block.text}
+                          onChange={(text) => updateBlockText(block.id, text)}
+                          className="nb-body flex-1 min-w-0"
+                          placeholder="Step"
+                          onEnter={() => continueFromBlock(block)}
+                          onBackspaceEmpty={() => removeBlockBackwards(block.id)}
+                          autoFocus={focusBlockId === block.id}
+                          onFocused={() => setFocusBlockId(null)}
+                          readOnly={!canEdit}
+                        />
+                      </div>
+                    )}
+
+                    {block.type === 'quote' && (
+                      <div className="nb-quote">
+                        <AutoGrowTextarea
+                          value={block.text}
+                          onChange={(text) => updateBlockText(block.id, text)}
+                          className="nb-quote-text flex-1 min-w-0"
+                          placeholder="Quote or citation"
+                          onEnter={() => continueFromBlock(block)}
+                          onBackspaceEmpty={() => removeBlockBackwards(block.id)}
+                          autoFocus={focusBlockId === block.id}
+                          onFocused={() => setFocusBlockId(null)}
+                          readOnly={!canEdit}
+                        />
+                      </div>
+                    )}
+
+                    {block.type === 'callout' && (
+                      <div className="nb-callout">
+                        <span className="nb-callout-icon">
+                          <Lightbulb className="w-3.5 h-3.5" strokeWidth={1.75} />
+                        </span>
+                        <AutoGrowTextarea
+                          value={block.text}
+                          onChange={(text) => updateBlockText(block.id, text)}
+                          className="nb-callout-text flex-1 min-w-0"
+                          placeholder="The one thing to remember…"
+                          onEnter={() => continueFromBlock(block)}
+                          onBackspaceEmpty={() => removeBlockBackwards(block.id)}
+                          autoFocus={focusBlockId === block.id}
+                          onFocused={() => setFocusBlockId(null)}
+                          readOnly={!canEdit}
+                        />
+                      </div>
+                    )}
+
+                    {/* Formula: multi-line by nature, so Enter breaks the line
+                        here rather than starting a new block. */}
+                    {block.type === 'code' && (
+                      <div className="nb-code">
+                        <AutoGrowTextarea
+                          value={block.text}
+                          onChange={(text) => updateBlockText(block.id, text)}
+                          className="nb-code-text w-full"
+                          placeholder="Formula, calculation, dosage…"
+                          onBackspaceEmpty={() => removeBlockBackwards(block.id)}
+                          autoFocus={focusBlockId === block.id}
+                          onFocused={() => setFocusBlockId(null)}
                           readOnly={!canEdit}
                         />
                       </div>
@@ -1390,11 +1864,18 @@ export default function NotebookPage() {
                 ))}
               </div>
 
-              {/* Add Block Menu — slash-command vibe (hidden on view-only shared folders) */}
+              {/* Add Block — the picker itself is rendered once, page-level */}
               {canEdit && (
-              <div className="mt-8 relative">
+              <div className="mt-8">
                 <button
-                  onClick={() => setShowBlockMenu(!showBlockMenu)}
+                  ref={addBlockBtnRef}
+                  onClick={(e) => {
+                    // Measure now — by the time React runs the updater the
+                    // synthetic event's currentTarget is already null.
+                    const el = e.currentTarget;
+                    const rect = el.getBoundingClientRect();
+                    setBlockMenu(prev => (prev && !prev.replaceBlockId ? null : { rect, anchorEl: el }));
+                  }}
                   className="text-[var(--color-text-soft)] hover:text-[var(--color-navy)] text-sm flex items-center gap-2 py-2 px-2 -mx-2 rounded-md hover:bg-[var(--color-surface-elevated)] transition group/add"
                 >
                   <span className="w-5 h-5 rounded border border-[var(--color-border-rule)] flex items-center justify-center group-hover/add:border-[var(--color-navy)] transition">
@@ -1403,36 +1884,6 @@ export default function NotebookPage() {
                   <span className="text-[0.8125rem]">Add a block</span>
                   <kbd className="nb-kbd ml-1">/</kbd>
                 </button>
-
-                {showBlockMenu && (
-                  <div className="absolute left-0 top-full mt-2 nb-menu z-10 fade-in">
-                    <div className="px-3 py-2 border-b border-[var(--color-border-hairline)]">
-                      <p className="label !mb-0">Basic blocks</p>
-                    </div>
-                    {[
-                      { type: 'heading' as const, label: 'Heading', desc: 'Section title', Icon: Heading, kbd: 'H' },
-                      { type: 'text' as const, label: 'Text', desc: 'Plain paragraph', Icon: Type, kbd: 'T' },
-                      { type: 'checklist' as const, label: 'To-do list', desc: 'Track tasks', Icon: CheckSquare, kbd: '☐' },
-                      { type: 'bullet' as const, label: 'Bullet list', desc: 'Simple list', Icon: List, kbd: '·' },
-                      { type: 'divider' as const, label: 'Divider', desc: 'Visual break', Icon: Minus, kbd: '—' },
-                    ].map(({ type, label, desc, Icon, kbd }) => (
-                      <button
-                        key={type}
-                        onClick={() => addBlock(type)}
-                        className="nb-menu-item"
-                      >
-                        <span className="nb-menu-icon">
-                          <Icon className="w-3.5 h-3.5" strokeWidth={1.75} />
-                        </span>
-                        <span className="flex-1 min-w-0">
-                          <span className="block text-[0.8125rem] font-semibold text-[var(--color-navy)] tracking-tight">{label}</span>
-                          <span className="block text-[11px] text-[var(--color-text-soft)]">{desc}</span>
-                        </span>
-                        <kbd className="nb-kbd">{kbd}</kbd>
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
               )}
             </div>
@@ -1495,30 +1946,59 @@ export default function NotebookPage() {
               </span>
             </div>
             {activeShare ? (
-              <p className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-soft)] mb-1">
-                <Users className="w-3 h-3 shrink-0" strokeWidth={1.75} />
-                <span className="truncate">Shared by {activeShare.ownerName} · {canEdit ? 'Can edit' : 'View only'}</span>
-              </p>
-            ) : (
-              <div className="nb-scope mt-2" role="group" aria-label="Filter tasks and documents">
-                <button
-                  type="button"
-                  onClick={() => setToolScope('folder')}
-                  data-active={toolScope === 'folder'}
-                  disabled={!selectedSubject}
-                  className="nb-scope-btn"
+              <div className="flex items-center gap-2 mt-2 min-w-0">
+                <span
+                  className="nb-perm"
+                  data-permission={activeShare.permission}
+                  aria-label={canEdit ? 'Can edit' : 'View only'}
                 >
-                  This folder
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setToolScope('all')}
-                  data-active={toolScope === 'all' || !selectedSubject}
-                  className="nb-scope-btn"
-                >
-                  All folders
-                </button>
+                  {canEdit ? <Pencil strokeWidth={2.25} /> : <Lock strokeWidth={2.25} />}
+                  <span>{canEdit ? 'Can edit' : 'View only'}</span>
+                </span>
+                <span className="text-[11px] text-[var(--color-text-soft)] truncate min-w-0">
+                  Shared by {activeShare.ownerName}
+                </span>
               </div>
+            ) : (
+              <>
+                <div className="nb-scope mt-2" role="group" aria-label="Filter tasks and documents">
+                  <button
+                    type="button"
+                    onClick={() => setToolScope('folder')}
+                    data-active={toolScope === 'folder'}
+                    disabled={!selectedSubject}
+                    className="nb-scope-btn"
+                  >
+                    This folder
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setToolScope('all')}
+                    data-active={toolScope === 'all' || !selectedSubject}
+                    className="nb-scope-btn"
+                  >
+                    All folders
+                  </button>
+                </div>
+
+                {/* Sharing state of the open folder — and the way in to change it */}
+                {selectedSubject && (
+                  <button
+                    type="button"
+                    onClick={() => openShareDialog(selectedSubject)}
+                    className="nb-filing-share"
+                    data-shared={openFolderShareCount > 0}
+                    title={openFolderShareCount ? 'Manage who can open this folder' : 'Share this folder with another MediHub user'}
+                  >
+                    {openFolderShareCount > 0 ? <Users strokeWidth={2} /> : <Share2 strokeWidth={2} />}
+                    <span className="truncate">
+                      {openFolderShareCount > 0
+                        ? `Shared with ${openFolderShareCount} ${openFolderShareCount === 1 ? 'person' : 'people'}`
+                        : 'Share this folder'}
+                    </span>
+                  </button>
+                )}
+              </>
             )}
           </div>
 
@@ -1789,6 +2269,7 @@ export default function NotebookPage() {
         onConfirm={async () => {
           if (!deletePageTarget) return;
           try {
+            cancelNoteSave(deletePageTarget.id);
             await deleteNoteAPI(deletePageTarget.id);
             patchPages(prev => prev.filter(p => p.id !== deletePageTarget.id));
             if (selectedPage?.id === deletePageTarget.id) {
@@ -1831,7 +2312,7 @@ export default function NotebookPage() {
                   Save a <span className="serif-accent">response</span> as a note.
                 </h3>
                 <p className="text-[0.8125rem] text-[var(--color-text-muted)] mt-2">
-                  Picks land in the &ldquo;AI Assistant&rdquo; section, formatted as blocks.
+                  Pick a response and it lands in the folder below, formatted as blocks.
                 </p>
               </div>
               <button
@@ -1840,6 +2321,20 @@ export default function NotebookPage() {
               >
                 <X className="w-4 h-4" strokeWidth={2} />
               </button>
+            </div>
+
+            {/* Where the pick gets filed — an existing folder or a new one */}
+            <div className="px-7 py-4 border-b border-[var(--color-border-hairline)] bg-[var(--color-surface-elevated)] shrink-0">
+              <FolderChoice
+                folders={subjects}
+                value={aiTargetFolder}
+                onChange={setAiTargetFolder}
+                hint={
+                  aiTargetFolder.trim() && !subjects.includes(aiTargetFolder.trim())
+                    ? `“${aiTargetFolder.trim()}” will be created when you pick a response.`
+                    : undefined
+                }
+              />
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-2">
@@ -1873,7 +2368,9 @@ export default function NotebookPage() {
                   <button
                     key={msg.id}
                     onClick={() => addNoteFromAI(msg)}
-                    className="w-full text-left p-4 rounded-lg border border-[var(--color-border-hairline)] hover:border-[var(--color-navy)] bg-[var(--color-surface-white)] hover:bg-[var(--color-surface-elevated)] transition-all group"
+                    disabled={!aiTargetFolder.trim()}
+                    title={aiTargetFolder.trim() ? `Save to “${aiTargetFolder.trim()}”` : 'Choose a folder first'}
+                    className="w-full text-left p-4 rounded-lg border border-[var(--color-border-hairline)] hover:border-[var(--color-navy)] bg-[var(--color-surface-white)] hover:bg-[var(--color-surface-elevated)] transition-all group disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-[var(--color-border-hairline)]"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
@@ -1903,6 +2400,18 @@ export default function NotebookPage() {
         </div>
       )}
 
+      {/* Block picker — one instance, anchored wherever it was summoned from */}
+      {blockMenu && canEdit && (
+        <BlockInsertMenu
+          anchor={blockMenu.rect}
+          anchorEl={blockMenu.anchorEl}
+          onPick={(type) =>
+            addBlock(type, { replaceId: blockMenu.replaceBlockId, afterId: blockMenu.afterBlockId })
+          }
+          onClose={() => setBlockMenu(null)}
+        />
+      )}
+
       {/* Delete Subject Confirmation */}
       <ConfirmModal
         open={!!deleteSubjectTarget}
@@ -1917,6 +2426,7 @@ export default function NotebookPage() {
             setPages(pages.filter(p => p.subject !== deleteSubjectTarget));
             setTasks(prev => prev.filter(t => t.subject !== deleteSubjectTarget));
             setUploadedFiles(prev => prev.filter(f => f.subject !== deleteSubjectTarget));
+            markSharedCount(deleteSubjectTarget, 0);
             if (selectedSubject === deleteSubjectTarget) {
               const remaining = subjects.filter(s => s !== deleteSubjectTarget);
               setSelectedSubject(remaining[0] || '');
@@ -2077,7 +2587,10 @@ export default function NotebookPage() {
                           <div className="text-[0.8125rem] font-semibold text-[var(--color-text-primary)] truncate">{s.user.name}</div>
                           <div className="text-[11px] text-[var(--color-text-soft)] truncate">{s.user.email}</div>
                         </div>
-                        <span className="nb-chip shrink-0">{s.permission === 'edit' ? 'Edit' : 'View'}</span>
+                        <span className="nb-perm" data-permission={s.permission}>
+                          {s.permission === 'edit' ? <Pencil strokeWidth={2.25} /> : <Lock strokeWidth={2.25} />}
+                          <span>{s.permission === 'edit' ? 'Edit' : 'View'}</span>
+                        </span>
                         <button
                           onClick={() => revokeShare(s.user.id)}
                           className="text-[var(--color-text-soft)] hover:text-red-500 transition p-1 rounded shrink-0"
