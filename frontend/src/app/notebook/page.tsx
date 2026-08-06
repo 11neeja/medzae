@@ -13,6 +13,8 @@ import ResizableSidebar from '@/components/ResizableSidebar';
 import ConfirmModal from '@/components/ConfirmModal';
 import FolderChoice from '@/components/FolderChoice';
 import BlockInsertMenu, { type BlockType as BlockKind } from '@/components/BlockInsertMenu';
+import RichTextBlock from '@/components/RichTextBlock';
+import TextFormatToolbar from '@/components/TextFormatToolbar';
 import { markdownToBlocks } from '@/lib/markdownToBlocks';
 import { useAuth } from '@/context/AuthContext';
 import { io } from 'socket.io-client';
@@ -1698,7 +1700,7 @@ export default function NotebookPage() {
                     )}
 
                     {block.type === 'heading' && (
-                      <AutoGrowTextarea
+                      <RichTextBlock
                         value={block.text}
                         onChange={(text) => updateBlockText(block.id, text)}
                         className="nb-h"
@@ -1712,7 +1714,7 @@ export default function NotebookPage() {
                     )}
 
                     {block.type === 'text' && (
-                      <AutoGrowTextarea
+                      <RichTextBlock
                         value={block.text}
                         onChange={(text) => updateBlockText(block.id, text)}
                         className="nb-body"
@@ -1734,7 +1736,7 @@ export default function NotebookPage() {
                           disabled={!canEdit}
                           className="nb-checkbox mt-[0.3125rem]"
                         />
-                        <AutoGrowTextarea
+                        <RichTextBlock
                           value={block.text}
                           onChange={(text) => updateBlockText(block.id, text)}
                           className={`nb-body flex-1 min-w-0 ${block.checked ? 'line-through text-[var(--color-text-soft)]' : ''}`}
@@ -1749,7 +1751,7 @@ export default function NotebookPage() {
                     )}
 
                     {block.type === 'subheading' && (
-                      <AutoGrowTextarea
+                      <RichTextBlock
                         value={block.text}
                         onChange={(text) => updateBlockText(block.id, text)}
                         className="nb-h2"
@@ -1765,7 +1767,7 @@ export default function NotebookPage() {
                     {block.type === 'bullet' && (
                       <div className="flex items-start gap-3 py-0.5">
                         <span className="text-[var(--color-text-muted)] font-bold leading-none mt-[0.4375rem] shrink-0">·</span>
-                        <AutoGrowTextarea
+                        <RichTextBlock
                           value={block.text}
                           onChange={(text) => updateBlockText(block.id, text)}
                           className="nb-body flex-1 min-w-0"
@@ -1789,7 +1791,7 @@ export default function NotebookPage() {
                             return `${n}.`;
                           })()}
                         </span>
-                        <AutoGrowTextarea
+                        <RichTextBlock
                           value={block.text}
                           onChange={(text) => updateBlockText(block.id, text)}
                           className="nb-body flex-1 min-w-0"
@@ -1805,7 +1807,7 @@ export default function NotebookPage() {
 
                     {block.type === 'quote' && (
                       <div className="nb-quote">
-                        <AutoGrowTextarea
+                        <RichTextBlock
                           value={block.text}
                           onChange={(text) => updateBlockText(block.id, text)}
                           className="nb-quote-text flex-1 min-w-0"
@@ -1824,7 +1826,7 @@ export default function NotebookPage() {
                         <span className="nb-callout-icon">
                           <Lightbulb className="w-3.5 h-3.5" strokeWidth={1.75} />
                         </span>
-                        <AutoGrowTextarea
+                        <RichTextBlock
                           value={block.text}
                           onChange={(text) => updateBlockText(block.id, text)}
                           className="nb-callout-text flex-1 min-w-0"
@@ -2399,6 +2401,9 @@ export default function NotebookPage() {
           </div>
         </div>
       )}
+
+      {/* Formatting bar — shows itself when block text is selected */}
+      {canEdit && selectedPage && <TextFormatToolbar />}
 
       {/* Block picker — one instance, anchored wherever it was summoned from */}
       {blockMenu && canEdit && (
