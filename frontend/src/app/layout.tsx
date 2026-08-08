@@ -17,11 +17,15 @@ import { OpportunityProvider } from '@/context/OpportunityContext'
 import Navbar from '@/components/Navbar'
 import ProtectedRoute from '@/components/ProtectedRoute'
 
+// All three are variable fonts. Listing explicit weights made next/font emit a
+// @font-face per weight that all pointed at the same variable file with no
+// variation settings, so every one rendered at the file's default instance —
+// font-weight (and therefore bold) did nothing anywhere in the app. Omitting
+// `weight` ships the weight axis itself, which is what a variable font is for.
 const fraunces = Fraunces({
   subsets: ['latin'],
   variable: '--font-fraunces',
   display: 'swap',
-  weight: ['300', '400', '500', '600', '700'],
   style: ['normal', 'italic'],
 })
 
@@ -29,7 +33,6 @@ const manrope = Manrope({
   subsets: ['latin'],
   variable: '--font-manrope',
   display: 'swap',
-  weight: ['300', '400', '500', '600', '700', '800'],
 })
 
 // Keep Inter loaded for backward compatibility with any
@@ -38,7 +41,6 @@ const inter = Inter({
   subsets: ['latin'],
   variable: '--font-inter',
   display: 'swap',
-  weight: ['300', '400', '500', '600', '700', '800'],
 })
 
 export const metadata: Metadata = {

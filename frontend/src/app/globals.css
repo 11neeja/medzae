@@ -106,7 +106,10 @@
     margin: 0;
     font-family: var(--font-manrope), 'Manrope', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     font-feature-settings: 'ss01', 'ss02', 'cv01', 'cv11';
-    font-variation-settings: 'wght' 400;
+    /* No font-variation-settings here. It is an inherited property, and an
+       explicit 'wght' pins the axis for every descendant — font-weight then
+       has no effect anywhere, so bold, semibold and <b> all render as regular.
+       Weight is set through font-weight so the cascade keeps working. */
     background: var(--gradient-bg);
     background-attachment: fixed;
     color: var(--color-text-primary);
