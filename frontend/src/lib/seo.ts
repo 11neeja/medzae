@@ -2,12 +2,14 @@
 // brand copy, and structured data used by layout metadata, robots.ts,
 // sitemap.ts, manifest.ts, and the JSON-LD blocks.
 
-// Public origin of the deployed site. Still the original Vercel host — the
-// Medzae rebrand did not move the deployment. Override with
+// Public origin of the deployed site. The Vercel project was renamed with the
+// brand, so medihub-web.vercel.app now only 307s here — pointing canonicals at
+// it made Google resolve every page to a redirect. Override with
 // NEXT_PUBLIC_SITE_URL when the project moves to a custom domain; canonicals,
-// the sitemap, and Open Graph URLs all follow it automatically.
+// the sitemap, robots, llms.txt, and Open Graph URLs all follow it
+// automatically, so the move to medzae.com is a one-variable change.
 export const SITE_URL = (
-  process.env.NEXT_PUBLIC_SITE_URL || 'https://medihub-web.vercel.app'
+  process.env.NEXT_PUBLIC_SITE_URL || 'https://medzae.vercel.app'
 ).replace(/\/$/, '')
 
 export const SITE_NAME = 'Medzae'
@@ -25,25 +27,37 @@ export const CONTACT_EMAIL = 'suva.neeja11@gmail.com'
 export const GITHUB_URL = 'https://github.com/11neeja/medihub'
 
 // Query phrases Medzae should surface for. Google ignores the keywords meta
-// tag but Bing and several AI crawlers still read it — costs nothing.
+// tag outright; Bing and some AI crawlers still read it, so it costs nothing
+// to keep — but it is the weakest signal here and adding head terms like
+// "health" to it does not make the site compete for them. Real ranking comes
+// from the title/description, the JSON-LD below, and pages that answer the
+// query. Ordered brand → legacy brand → category → long-tail, because the
+// long-tail entries are the ones actually winnable.
 export const SITE_KEYWORDS = [
   'Medzae',
   'medzae web',
   'medzae website',
   'medzae platform',
+  'medzae medical',
+  // Former brand — people who used or heard of the product before the rename
+  // still search this, and it is a legitimate alternate name for the site.
+  'MediHub',
+  'medihub medical platform',
   'medical platform',
   'medical hub',
-  'health website',
   'medical learning platform',
   'medical collaboration platform',
+  'medical study platform',
+  'healthcare education platform',
+  'medical AI assistant',
+  'AI medical study assistant',
   'platform for medical students',
   'medical student community',
   'medical news feed',
   'medical events',
   'medical notebook app',
-  'AI medical study assistant',
+  'note taking app for medical students',
   'doctor networking platform',
-  'healthcare education platform',
 ]
 
 export const FEATURE_LIST = [
@@ -71,6 +85,10 @@ export const SITE_GRAPH = {
       '@type': 'Organization',
       '@id': `${SITE_URL}/#organization`,
       name: SITE_NAME,
+      // "MediHub" is the pre-rename name, declared so the two brands resolve
+      // to one entity instead of competing — this is what carries recognition
+      // across the rename for anyone still searching the old name.
+      alternateName: ['MediHub', 'Medzae Web'],
       url: SITE_URL,
       logo: { '@type': 'ImageObject', url: `${SITE_URL}/icon.svg` },
       email: CONTACT_EMAIL,
@@ -81,7 +99,13 @@ export const SITE_GRAPH = {
       '@id': `${SITE_URL}/#website`,
       url: SITE_URL,
       name: SITE_NAME,
-      alternateName: ['Medzae Web', 'Medzae Website', 'medzae', 'Med Zae'],
+      alternateName: [
+        'Medzae Web',
+        'Medzae Website',
+        'medzae',
+        'Med Zae',
+        'MediHub',
+      ],
       description: SITE_DESCRIPTION,
       inLanguage: 'en',
       publisher: { '@id': `${SITE_URL}/#organization` },

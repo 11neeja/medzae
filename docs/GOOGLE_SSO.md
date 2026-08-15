@@ -49,9 +49,15 @@ Browser                                Backend (Render)
    profile, which are default). Publish the app so any Google account can sign
    in (while in "Testing" mode only listed test users can).
 3. **Create credentials → OAuth client ID → Web application**:
-   - Authorized JavaScript origins:
+   - Authorized JavaScript origins — one entry per host the button loads on,
+     with no path and no trailing slash. A missing entry is the usual cause of
+     the button failing silently:
      - `http://localhost:3000`
-     - `https://medihub-web.vercel.app` (plus any custom domain later)
+     - `https://medzae.vercel.app`
+     - `https://medihub-web.vercel.app` (pre-rename host; only needed while it
+       still redirects)
+     - `https://medzae.com` and `https://www.medzae.com` once the domain is
+       bought
    - Authorized redirect URIs: **leave empty** (not used by this flow).
 4. Copy the **Client ID** (`xxxxx.apps.googleusercontent.com`). There is a
    client secret on that page — it is **not needed anywhere**.
