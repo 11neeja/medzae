@@ -1,7 +1,7 @@
 # Google sign-in ("Continue with Google")
 
-MediHub supports Google SSO on both the **login** and **signup** pages. One
-endpoint covers both: signing in with a Google account that MediHub has never
+Medzae supports Google SSO on both the **login** and **signup** pages. One
+endpoint covers both: signing in with a Google account that Medzae has never
 seen creates the account on the spot; signing in with a known one just logs in.
 
 ## How the flow works
@@ -20,7 +20,7 @@ Browser                                Backend (Render)
                                           else link by email,
                                           else create the account
                                           (password = null, welcome email)
-6. Store MediHub JWT exactly  ◄──────  6. Respond with the same shape as
+6. Store Medzae JWT exactly  ◄──────  6. Respond with the same shape as
    like a password login                  /login: { _id, name, email, role,
    (localStorage/sessionStorage)          token }
 ```
@@ -43,9 +43,9 @@ Browser                                Backend (Render)
 ## One-time Google Cloud setup (~5 min)
 
 1. Open <https://console.cloud.google.com/apis/credentials> (create/select a
-   project, e.g. "MediHub").
+   project, e.g. "Medzae").
 2. Configure the **OAuth consent screen** (Branding): External, app name
-   "MediHub", your support email. No extra scopes needed (only openid/email/
+   "Medzae", your support email. No extra scopes needed (only openid/email/
    profile, which are default). Publish the app so any Google account can sign
    in (while in "Testing" mode only listed test users can).
 3. **Create credentials → OAuth client ID → Web application**:

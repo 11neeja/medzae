@@ -1,7 +1,7 @@
 import { ImageResponse } from 'next/og'
 
 // iOS home-screen icon (iOS applies its own corner rounding).
-// The MediHub globe on a clean white tile, matching the browser-tab favicon.
+// The Medzae globe on a clean white tile, matching the browser-tab favicon.
 export const runtime = 'edge'
 export const size = { width: 180, height: 180 }
 export const contentType = 'image/png'

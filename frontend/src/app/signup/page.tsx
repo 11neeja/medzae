@@ -108,7 +108,7 @@ export default function SignupPage() {
                 fontVariationSettings: "'opsz' 144, 'SOFT' 50, 'WONK' 1",
               }}
             >
-              Medi<span className="italic font-normal">Hub</span>
+              Med<span className="italic font-normal">zae</span>
             </p>
           </div>
 
@@ -172,7 +172,7 @@ export default function SignupPage() {
                 Create your account
               </h1>
               <p className="body-md">
-                Join thousands of medical professionals already learning, collaborating, and growing on MediHub.
+                Join thousands of medical professionals already learning, collaborating, and growing on Medzae.
               </p>
             </div>
 

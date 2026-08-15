@@ -67,7 +67,7 @@ services:
       - key: SMTP_PASS
         sync: false
       - key: SMTP_FROM_NAME
-        value: MediHub
+        value: Medzae
       - key: SMTP_FROM_EMAIL
         sync: false
       - key: AI_PROVIDER

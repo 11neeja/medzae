@@ -23,7 +23,7 @@ const shell = (content) => `
     <div style="max-width:640px;margin:0 auto;padding:32px 16px;">
       <div style="background:${theme.card};border:1px solid ${theme.border};border-radius:24px;overflow:hidden;box-shadow:0 20px 60px rgba(11,25,77,0.08);">
         <div style="padding:28px 32px;background:linear-gradient(135deg, ${theme.navy} 0%, ${theme.blue} 100%);color:#fff;">
-          <div style="font-size:13px;letter-spacing:0.24em;text-transform:uppercase;opacity:0.8;">MediHub</div>
+          <div style="font-size:13px;letter-spacing:0.24em;text-transform:uppercase;opacity:0.8;">Medzae</div>
           <div style="font-size:30px;font-weight:700;margin-top:10px;line-height:1.15;">${content.title}</div>
           <div style="font-size:15px;opacity:0.92;margin-top:10px;line-height:1.6;">${content.subtitle}</div>
         </div>
@@ -32,29 +32,29 @@ const shell = (content) => `
         </div>
       </div>
       <div style="text-align:center;font-size:12px;color:${theme.muted};padding:18px 10px 0;line-height:1.6;">
-        MediHub • Built for medical learning and collaboration
+        Medzae • Built for medical learning and collaboration
       </div>
     </div>
   </div>
 `
 
 export const buildWelcomeEmail = ({ name }) => shell({
-  title: 'Welcome to MediHub',
+  title: 'Welcome to Medzae',
   subtitle: 'Your account is ready. Start exploring your study and collaboration workspace.',
   body: `
     <p style="margin:0 0 18px;font-size:16px;line-height:1.8;">Hi ${name},</p>
-    <p style="margin:0 0 18px;font-size:15px;line-height:1.8;">Welcome to MediHub. You can now use your dashboard, medical feed, notebook, chat, events, and AI assistant in one place.</p>
+    <p style="margin:0 0 18px;font-size:15px;line-height:1.8;">Welcome to Medzae. You can now use your dashboard, medical feed, notebook, chat, events, and AI assistant in one place.</p>
     <div style="background:${theme.softBlue};border:1px solid ${theme.border};border-radius:18px;padding:18px 20px;margin:24px 0;">
       <p style="margin:0 0 10px;font-size:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:${theme.blue};">What you can do next</p>
       <p style="margin:0;color:${theme.text};font-size:14px;line-height:1.7;">Complete your profile, browse the feed, join groups, and start saving notes and documents.</p>
     </div>
-    <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/home" style="display:inline-block;background:${theme.navy};color:#fff;text-decoration:none;padding:14px 24px;border-radius:14px;font-weight:700;margin-top:6px;">Go to MediHub</a>
+    <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/home" style="display:inline-block;background:${theme.navy};color:#fff;text-decoration:none;padding:14px 24px;border-radius:14px;font-weight:700;margin-top:6px;">Go to Medzae</a>
   `,
 })
 
 export const buildDiagnosticEmail = ({ name }) => shell({
   title: 'Mail Delivery Check',
-  subtitle: 'A diagnostic message confirming MediHub can deliver email from this environment.',
+  subtitle: 'A diagnostic message confirming Medzae can deliver email from this environment.',
   body: `
     <p style="margin:0 0 18px;font-size:16px;line-height:1.8;">Hi ${name},</p>
     <p style="margin:0 0 18px;font-size:15px;line-height:1.8;">You requested a mail delivery check. Since this message reached you, welcome and password-reset emails are working from this server.</p>
@@ -66,7 +66,7 @@ export const buildDiagnosticEmail = ({ name }) => shell({
 
 export const buildContactEmail = ({ name, email, message }) => shell({
   title: 'New Contact Message',
-  subtitle: 'Someone reached out through the MediHub “Get in touch” form.',
+  subtitle: 'Someone reached out through the Medzae “Get in touch” form.',
   body: `
     <div style="background:${theme.softBlue};border:1px solid ${theme.border};border-radius:18px;padding:18px 20px;margin:0 0 24px;">
       <p style="margin:0 0 8px;font-size:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:${theme.blue};">From</p>
@@ -80,7 +80,7 @@ export const buildContactEmail = ({ name, email, message }) => shell({
 
 export const buildPasswordResetEmail = ({ name, resetUrl }) => shell({
   title: 'Reset Your Password',
-  subtitle: 'We received a request to reset your MediHub password. This link expires in 1 hour.',
+  subtitle: 'We received a request to reset your Medzae password. This link expires in 1 hour.',
   body: `
     <p style="margin:0 0 18px;font-size:16px;line-height:1.8;">Hi ${name},</p>
     <p style="margin:0 0 18px;font-size:15px;line-height:1.8;">Use the button below to choose a new password. If you did not request this, you can ignore this message safely.</p>

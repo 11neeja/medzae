@@ -4,7 +4,7 @@ import type { Metadata } from 'next'
 export const metadata: Metadata = {
   title: 'Sign Up Free',
   description:
-    'Create your free MediHub account — join the medical hub for news, events, notebooks, groups, chat, and AI-assisted study.',
+    'Create your free Medzae account — join the medical hub for news, events, notebooks, groups, chat, and AI-assisted study.',
   alternates: { canonical: '/signup' },
 }
 

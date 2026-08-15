@@ -1,5 +1,5 @@
 {
-  "name": "medihub",
+  "name": "medzae",
   "version": "1.0.0",
   "prisma": {
     "schema": "backend/prisma/schema.prisma"

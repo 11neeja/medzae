@@ -1,12 +1,12 @@
-# MediHub ✨
+# Medzae ✨
 
-MediHub is a full-stack medical learning and collaboration platform built with Next.js 14, Express, Prisma, PostgreSQL, and Socket.IO.
+Medzae is a full-stack medical learning and collaboration platform built with Next.js 14, Express, Prisma, PostgreSQL, and Socket.IO.
 
 </details>
 
 ## Overview 🔎
 
-MediHub brings together the tools medical students, doctors, researchers, and educators need in one place. The app combines a polished landing experience with authenticated workspace features for learning, collaboration, communication, and career growth.
+Medzae brings together the tools medical students, doctors, researchers, and educators need in one place. The app combines a polished landing experience with authenticated workspace features for learning, collaboration, communication, and career growth.
 
 <details>
 <summary>What the app covers</summary>

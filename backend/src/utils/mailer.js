@@ -81,7 +81,7 @@ const recordFailure = (provider, label, error) => {
 
 const getFromParts = () => ({
   email: trimmed(process.env.SMTP_FROM_EMAIL) || smtpUser(),
-  name: trimmed(process.env.SMTP_FROM_NAME) || 'MediHub',
+  name: trimmed(process.env.SMTP_FROM_NAME) || 'Medzae',
 })
 
 const getFromAddress = () => {
@@ -182,7 +182,7 @@ const sendViaGmailRelay = async ({ to, subject, html, text, replyTo }) => {
     html,
     text,
     ...(replyTo ? { replyTo } : {}),
-    fromName: trimmed(process.env.SMTP_FROM_NAME) || 'MediHub',
+    fromName: trimmed(process.env.SMTP_FROM_NAME) || 'Medzae',
   })
   // Apps Script cannot report the Gmail message id — acceptance is the signal.
   return { messageId: null }
@@ -517,18 +517,18 @@ export const sendWelcomeEmail = async ({ name, email }) =>
   deliver('Welcome email', {
     to: email,
     toName: name,
-    subject: 'Welcome to MediHub',
+    subject: 'Welcome to Medzae',
     html: buildWelcomeEmail({ name }),
-    text: `Welcome to MediHub, ${name}. Visit ${process.env.FRONTEND_URL || 'http://localhost:3000'}/home to get started.`,
+    text: `Welcome to Medzae, ${name}. Visit ${process.env.FRONTEND_URL || 'http://localhost:3000'}/home to get started.`,
   })
 
 export const sendPasswordResetEmail = async ({ name, email, resetUrl }) =>
   deliver('Password reset email', {
     to: email,
     toName: name,
-    subject: 'Reset your MediHub password',
+    subject: 'Reset your Medzae password',
     html: buildPasswordResetEmail({ name, resetUrl }),
-    text: `Reset your MediHub password: ${resetUrl}`,
+    text: `Reset your Medzae password: ${resetUrl}`,
   })
 
 // One-click production probe (POST /api/users/test-email): sends to the
@@ -537,23 +537,23 @@ export const sendTestEmail = async ({ name, email }) =>
   deliver('Mail diagnostic', {
     to: email,
     toName: name,
-    subject: 'MediHub mail delivery check',
+    subject: 'Medzae mail delivery check',
     html: buildDiagnosticEmail({ name }),
-    text: 'Mail delivery from MediHub is working. Welcome and password-reset emails will reach users.',
+    text: 'Mail delivery from Medzae is working. Welcome and password-reset emails will reach users.',
   })
 
 // Where the landing-page "Get in touch" form is delivered. Overridable via
-// CONTACT_RECIPIENT_EMAIL (Render dashboard); defaults to the MediHub inbox.
+// CONTACT_RECIPIENT_EMAIL (Render dashboard); defaults to the Medzae inbox.
 export const getContactRecipient = () =>
   trimmed(process.env.CONTACT_RECIPIENT_EMAIL) || 'suva.neeja11@gmail.com'
 
-// Public contact form (POST /api/users/contact): delivered to the MediHub
+// Public contact form (POST /api/users/contact): delivered to the Medzae
 // inbox with the sender set as reply-to, so a reply goes straight to them.
 export const sendContactEmail = async ({ name, email, message }) =>
   deliver('Contact message', {
     to: getContactRecipient(),
-    subject: `New MediHub inquiry from ${name}`,
+    subject: `New Medzae inquiry from ${name}`,
     replyTo: email,
     html: buildContactEmail({ name, email, message }),
-    text: `New contact message via the MediHub "Get in touch" form.\n\nFrom: ${name} <${email}>\n\n${message}`,
+    text: `New contact message via the Medzae "Get in touch" form.\n\nFrom: ${name} <${email}>\n\n${message}`,
   })

@@ -95,7 +95,7 @@ export default function AssistantPage() {
   const WELCOME_MESSAGE: AssistantMessage = {
     id: 'm1',
     sender: 'assistant',
-    text: '👋 Hello! I\'m your **MediHub AI Assistant**.\n\nI can help you with:\n• Answering medical questions\n• Summarizing uploaded documents (PDF, PPT, Images, CSV & more)\n• Explaining complex concepts\n• Providing study tips\n\nUpload a document to get started, or ask me anything!',
+    text: '👋 Hello! I\'m your **Medzae AI Assistant**.\n\nI can help you with:\n• Answering medical questions\n• Summarizing uploaded documents (PDF, PPT, Images, CSV & more)\n• Explaining complex concepts\n• Providing study tips\n\nUpload a document to get started, or ask me anything!',
     createdAt: new Date().toISOString(),
   };
 
@@ -734,7 +734,7 @@ export default function AssistantPage() {
                 <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: 'var(--gradient-primary)' }}>
                   <Bot className="w-4 h-4 text-white" />
                 </div>
-                <span className="text-sm font-semibold text-[var(--color-text-primary)] truncate">MediHub AI</span>
+                <span className="text-sm font-semibold text-[var(--color-text-primary)] truncate">Medzae AI</span>
               </div>
               {!onlyWelcome && (
                 <button
@@ -770,7 +770,7 @@ export default function AssistantPage() {
                           <Bot className="w-10 h-10 text-white" />
                         </div>
                         <h2 className="heading-2 mb-2">Hi {user?.name?.split(' ')[0] || 'there'}!</h2>
-                        <p className="body-md mb-6">I&apos;m your MediHub AI Assistant. Ask me anything — or upload a document for instant analysis.</p>
+                        <p className="body-md mb-6">I&apos;m your Medzae AI Assistant. Ask me anything — or upload a document for instant analysis.</p>
                       </div>
 
                       <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-w-xl mx-auto">
@@ -820,7 +820,7 @@ export default function AssistantPage() {
                           {/* Sender + time */}
                           <div className="flex items-center gap-2 text-[11px]">
                             <span className="font-semibold text-[var(--color-text-primary)]">
-                              {isUser ? 'You' : 'MediHub AI'}
+                              {isUser ? 'You' : 'Medzae AI'}
                             </span>
                             <span className="text-[var(--color-text-muted)]">·</span>
                             <span className="text-[var(--color-text-muted)]">{formatTime(message.createdAt)}</span>
@@ -866,7 +866,7 @@ export default function AssistantPage() {
                       </div>
                       <div className="flex flex-col gap-1 items-start">
                         <div className="flex items-center gap-2 text-[11px]">
-                          <span className="font-semibold text-[var(--color-text-primary)]">MediHub AI</span>
+                          <span className="font-semibold text-[var(--color-text-primary)]">Medzae AI</span>
                           <span className="text-[var(--color-text-muted)]">·</span>
                           <span className="text-[var(--color-text-muted)]">thinking</span>
                         </div>

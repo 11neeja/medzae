@@ -1,7 +1,7 @@
 /**
- * MediHub Gmail relay — Google Apps Script web app.
+ * Medzae Gmail relay — Google Apps Script web app.
  *
- * Sends MediHub's transactional mail (welcome / password reset) through the
+ * Sends Medzae's transactional mail (welcome / password reset) through the
  * real Gmail account over HTTPS, so it works from hosts that cannot reach
  * smtp.gmail.com (Render) and lands in inboxes as authenticated gmail.com
  * mail. Free; consumer Gmail allows ~100 recipients/day — the backend
@@ -27,7 +27,7 @@ const SECRET = 'PASTE_YOUR_SECRET_HERE'
 
 // Browser sanity check: opening the /exec URL should show this JSON.
 function doGet() {
-  return json_({ ok: true, service: 'MediHub gmail relay', usage: 'POST JSON {secret, to, subject, html, text}' })
+  return json_({ ok: true, service: 'Medzae gmail relay', usage: 'POST JSON {secret, to, subject, html, text}' })
 }
 
 function doPost(e) {
@@ -43,7 +43,7 @@ function doPost(e) {
 
     GmailApp.sendEmail(to, String(body.subject || '(no subject)'), String(body.text || ''), {
       htmlBody: body.html ? String(body.html) : undefined,
-      name: String(body.fromName || 'MediHub'),
+      name: String(body.fromName || 'Medzae'),
     })
 
     return json_({ ok: true, remaining: MailApp.getRemainingDailyQuota() })

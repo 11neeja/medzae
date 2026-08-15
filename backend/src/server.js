@@ -197,7 +197,7 @@ const startServer = async () => {
 
   // Routes
   app.get('/', (req, res) => {
-    res.json({ message: 'Medihub API Server' })
+    res.json({ message: 'Medzae API Server' })
   })
 
   app.use('/api/users', userRoutes)

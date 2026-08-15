@@ -1,14 +1,14 @@
 import { ImageResponse } from 'next/og'
 import { SITE_URL } from '@/lib/seo'
 
-// Social share card (Open Graph) — shown when MediHub is linked from search
+// Social share card (Open Graph) — shown when Medzae is linked from search
 // results, chats, and social posts. Twitter/X falls back to this image via
 // the summary_large_image card in the root metadata.
 // Edge runtime: @vercel/og's Node build cannot resolve its WASM assets from
 // paths with spaces/parentheses (this repo's path, on Windows); the edge
 // bundle loads them differently and works everywhere.
 export const runtime = 'edge'
-export const alt = 'MediHub — a practice for medical minds. Medical platform for learning and collaboration.'
+export const alt = 'Medzae — a practice for medical minds. Medical platform for learning and collaboration.'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 
@@ -65,7 +65,7 @@ export default function OpenGraphImage() {
               src={`data:image/svg+xml,${encodeURIComponent(GLOBE)}`}
               alt=""
             />
-            <div style={{ display: 'flex', fontSize: 44, letterSpacing: -1 }}>MediHub</div>
+            <div style={{ display: 'flex', fontSize: 44, letterSpacing: -1 }}>Medzae</div>
           </div>
           <div style={{ display: 'flex', fontSize: 26, color: 'rgba(230, 240, 255, 0.7)' }}>
             {SITE_URL.replace('https://', '')}

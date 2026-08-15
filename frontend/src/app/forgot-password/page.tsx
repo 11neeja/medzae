@@ -42,7 +42,7 @@ export default function ForgotPasswordPage() {
 
         <p className="label mb-3">Forgot password</p>
         <h1 className="text-3xl font-extrabold tracking-tight text-[var(--color-navy)] mb-3">Send a reset email</h1>
-        <p className="body-md mb-6">We’ll email you a secure reset link if the address exists in MediHub.</p>
+        <p className="body-md mb-6">We’ll email you a secure reset link if the address exists in Medzae.</p>
 
         {error && (
           <div className="mb-5 bg-red-50 border border-red-200 rounded-xl p-3 flex items-center gap-2">

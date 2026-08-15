@@ -308,7 +308,7 @@ export const sendMailDiagnostic = async (req, res) => {
   }
 }
 
-// @desc    Public "Get in touch" contact form → emails the MediHub inbox
+// @desc    Public "Get in touch" contact form → emails the Medzae inbox
 // @route   POST /api/users/contact
 const CONTACT_COOLDOWN_MS = 30 * 1000
 const CONTACT_MESSAGE_MAX = 5000

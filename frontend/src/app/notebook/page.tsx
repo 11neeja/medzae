@@ -701,7 +701,7 @@ export default function NotebookPage() {
     }
   };
 
-  // Live search of MediHub users to pick a recipient (mirrors the chat flow).
+  // Live search of Medzae users to pick a recipient (mirrors the chat flow).
   const handleShareSearch = async (query: string) => {
     setShareSearchQuery(query);
     setShareError('');
@@ -1990,7 +1990,7 @@ export default function NotebookPage() {
                     onClick={() => openShareDialog(selectedSubject)}
                     className="nb-filing-share"
                     data-shared={openFolderShareCount > 0}
-                    title={openFolderShareCount ? 'Manage who can open this folder' : 'Share this folder with another MediHub user'}
+                    title={openFolderShareCount ? 'Manage who can open this folder' : 'Share this folder with another Medzae user'}
                   >
                     {openFolderShareCount > 0 ? <Users strokeWidth={2} /> : <Share2 strokeWidth={2} />}
                     <span className="truncate">
@@ -2469,7 +2469,7 @@ export default function NotebookPage() {
                   {shareTarget}
                 </h3>
                 <p className="text-[0.8125rem] text-[var(--color-text-muted)] mt-1.5">
-                  Give another MediHub user access to this folder&apos;s notes, tasks and documents.
+                  Give another Medzae user access to this folder&apos;s notes, tasks and documents.
                 </p>
               </div>
               <button
@@ -2505,7 +2505,7 @@ export default function NotebookPage() {
                 </div>
               </div>
 
-              {/* User picker — search MediHub users, click one to share */}
+              {/* User picker — search Medzae users, click one to share */}
               <div>
                 <label className="label !mb-1.5 block">Add a person</label>
                 <div className="flex items-center gap-2 bg-[var(--color-surface-white)] border border-[var(--color-border-hairline)] rounded-md px-3 py-2 focus-within:border-[var(--color-navy)] transition-colors">

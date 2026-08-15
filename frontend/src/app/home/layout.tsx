@@ -4,7 +4,7 @@ import type { Metadata } from 'next'
 // crawlers only ever see the session splash / login redirect.
 export const metadata: Metadata = {
   title: 'Home',
-  description: 'Your MediHub dashboard — news, events, notes, and communities at a glance.',
+  description: 'Your Medzae dashboard — news, events, notes, and communities at a glance.',
   robots: { index: false, follow: true },
 }
 

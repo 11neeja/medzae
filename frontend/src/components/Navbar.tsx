@@ -150,7 +150,7 @@ export default function Navbar() {
               fontVariationSettings: "'opsz' 144, 'SOFT' 50, 'WONK' 1",
             }}
           >
-            Medi<span className="italic font-normal">Hub</span>
+            Med<span className="italic font-normal">zae</span>
           </span>
           <span className="hidden xl:inline-block h-1 w-1 rounded-full bg-[var(--color-navy)]/30" aria-hidden />
           <span

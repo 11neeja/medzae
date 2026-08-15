@@ -17,7 +17,7 @@ const APP_ONLY_ROUTES = [
   '/reset-password',
 ]
 
-// AI search & answer-engine crawlers, explicitly welcomed so MediHub can be
+// AI search & answer-engine crawlers, explicitly welcomed so Medzae can be
 // found and cited from ChatGPT, Claude, Perplexity, Grok, Gemini, Copilot,
 // Meta AI, and friends. (An unknown name in robots.txt is simply ignored,
 // so this list is safe to keep generous.)

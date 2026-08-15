@@ -15,13 +15,13 @@ const seedDatabase = async () => {
     const hash = await bcrypt.hash('password123', salt)
 
     const usersData = [
-      { name: 'Dr. Michael Chen', email: 'mchen@medihub.com', password: hash },
-      { name: 'Prof. Emily Rodriguez', email: 'erodriguez@medihub.com', password: hash },
-      { name: 'Alex Kim', email: 'alexkim@medihub.com', password: hash },
-      { name: 'Dr. James Wilson', email: 'jwilson@medihub.com', password: hash },
-      { name: 'Dr. Maria Garcia', email: 'mgarcia@medihub.com', password: hash },
-      { name: 'Prof. David Lee', email: 'dlee@medihub.com', password: hash },
-      { name: 'Rachel Thompson', email: 'rthompson@medihub.com', password: hash },
+      { name: 'Dr. Michael Chen', email: 'mchen@medzae.com', password: hash },
+      { name: 'Prof. Emily Rodriguez', email: 'erodriguez@medzae.com', password: hash },
+      { name: 'Alex Kim', email: 'alexkim@medzae.com', password: hash },
+      { name: 'Dr. James Wilson', email: 'jwilson@medzae.com', password: hash },
+      { name: 'Dr. Maria Garcia', email: 'mgarcia@medzae.com', password: hash },
+      { name: 'Prof. David Lee', email: 'dlee@medzae.com', password: hash },
+      { name: 'Rachel Thompson', email: 'rthompson@medzae.com', password: hash },
     ]
 
     const users = []

@@ -180,7 +180,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Exchange a Google ID token (from the GIS button) for a MediHub session.
+  // Exchange a Google ID token (from the GIS button) for a Medzae session.
   // The backend verifies the token and creates the account on first sign-in,
   // so this one call covers both "login with Google" and "sign up with Google".
   const loginWithGoogle = async (credential: string, rememberMe = false) => {

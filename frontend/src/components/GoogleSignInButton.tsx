@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 // Official "Sign in with Google" button (Google Identity Services).
 // Loads Google's script, renders their button, and hands the resulting
 // ID-token credential to `onCredential` — the page decides what to do
-// with it (exchange it for a MediHub session via the backend).
+// with it (exchange it for a Medzae session via the backend).
 //
 // Renders nothing when NEXT_PUBLIC_GOOGLE_CLIENT_ID is unset or the
 // script cannot load (ad blockers), so the email/password form always

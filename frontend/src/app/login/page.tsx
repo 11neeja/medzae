@@ -175,7 +175,7 @@ export default function LoginPage() {
             <div className="mb-8">
               <p className="label mb-3">Welcome back</p>
               <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight text-[var(--color-navy)] mb-3">
-                Sign in to MediHub
+                Sign in to Medzae
               </h1>
               <p className="body-md">
                 Pick up right where you left off — your notes, conversations, and study materials are waiting.
@@ -264,7 +264,7 @@ export default function LoginPage() {
 
             <div className="mt-8 pt-6 border-t border-[var(--color-border-light)] text-center">
               <p className="body-md">
-                New to MediHub?{' '}
+                New to Medzae?{' '}
                 <Link
                   href="/signup"
                   className="text-[var(--color-blue-primary)] font-semibold hover:text-[var(--color-navy-hover)] transition-smooth"
@@ -319,13 +319,13 @@ export default function LoginPage() {
                 fontVariationSettings: "'opsz' 144, 'SOFT' 50, 'WONK' 1",
               }}
             >
-              Medi<span className="italic font-normal">Hub</span>
+              Med<span className="italic font-normal">zae</span>
             </p>
           </div>
 
           <div className="fade-in-delay-2">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/70 mb-4">
-              Today on MediHub
+              Today on Medzae
             </p>
             <blockquote
               className="mb-6"
@@ -342,10 +342,10 @@ export default function LoginPage() {
             </blockquote>
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-white/15 backdrop-blur-sm flex items-center justify-center font-bold text-sm">
-                MH
+                MC
               </div>
               <div>
-                <p className="text-sm font-semibold">MediHub Community Member</p>
+                <p className="text-sm font-semibold">Medzae Community Member</p>
                 <p className="text-xs text-white/60">Resident Physician</p>
               </div>
             </div>

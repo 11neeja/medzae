@@ -4,7 +4,7 @@ import type { Metadata } from 'next'
 // crawlers only ever see the session splash / login redirect.
 export const metadata: Metadata = {
   title: 'Chat',
-  description: 'Real-time messaging with your medical peers on MediHub.',
+  description: 'Real-time messaging with your medical peers on Medzae.',
   robots: { index: false, follow: true },
 }
 

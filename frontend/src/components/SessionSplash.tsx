@@ -34,7 +34,7 @@ export default function SessionSplash() {
           fontVariationSettings: "'opsz' 144, 'SOFT' 50, 'WONK' 1",
         }}
       >
-        Medi<span className="italic font-normal">Hub</span>
+        Med<span className="italic font-normal">zae</span>
       </p>
 
       <div className="skeleton mt-6 h-1 w-44 rounded-full" aria-hidden />

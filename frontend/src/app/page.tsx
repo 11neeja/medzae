@@ -76,19 +76,19 @@ const STATS = [
 
 const FAQ_ITEMS = [
   {
-    question: 'What is MediHub?',
+    question: 'What is Medzae?',
     answer:
-      'MediHub is an all-in-one medical platform — a digital health hub where medical students, doctors, professors, and researchers read curated medical news, discover events, organize notebooks, join groups, chat in real time, and study with an AI assistant. It is free to join and runs in any modern browser.',
+      'Medzae is an all-in-one medical platform — a digital health hub where medical students, doctors, professors, and researchers read curated medical news, discover events, organize notebooks, join groups, chat in real time, and study with an AI assistant. It is free to join and runs in any modern browser.',
   },
   {
-    question: 'Who is MediHub designed for?',
+    question: 'Who is Medzae designed for?',
     answer:
-      'MediHub is built for medical students, doctors, professors, and researchers who need one organized hub for daily learning and collaboration.',
+      'Medzae is built for medical students, doctors, professors, and researchers who need one organized hub for daily learning and collaboration.',
   },
   {
     question: 'Can I use it for both study and community interactions?',
     answer:
-      'Yes. MediHub combines study tools like notebooks and AI summaries with community features such as groups, chat, and a professional feed in one platform.',
+      'Yes. Medzae combines study tools like notebooks and AI summaries with community features such as groups, chat, and a professional feed in one platform.',
   },
   {
     question: 'How does the AI assistant help?',
@@ -96,7 +96,7 @@ const FAQ_ITEMS = [
       'The AI assistant can answer medical questions, summarize uploaded documents, and help you capture study-ready insights you can save to your notebook.',
   },
   {
-    question: 'Is MediHub beginner-friendly?',
+    question: 'Is Medzae beginner-friendly?',
     answer:
       'Absolutely. The interface is designed to be calm and intuitive, so you can get started quickly whether you are new to digital study tools or switching from multiple apps.',
   },
@@ -228,7 +228,7 @@ export default function LandingPage() {
             letterSpacing: '-0.04em',
           }}
         >
-          MediHub
+          Medzae
         </p>
 
         {/* Decorative gradient orbs */}
@@ -260,13 +260,13 @@ export default function LandingPage() {
               lineHeight: 0.98,
             }}
           >
-            <span className="sr-only">MediHub — </span>A practice for
+            <span className="sr-only">Medzae — </span>A practice for
             <br />
             <span className="serif-accent">medical minds</span>.
           </h1>
 
           <p className="text-base sm:text-lg md:text-xl text-[var(--color-text-secondary)] leading-relaxed max-w-2xl mx-auto mb-10 fade-in-delay-2">
-            Welcome to MediHub — the all-in-one medical platform for learning and collaboration.
+            Welcome to Medzae — the all-in-one medical platform for learning and collaboration.
             News, events, notes, groups, messaging, and an AI study assistant, all in one calm place.
           </p>
 
@@ -372,7 +372,7 @@ export default function LandingPage() {
             </h2>
             <p className="text-base sm:text-lg text-[var(--color-text-secondary)] leading-relaxed">
               Medical professionals and students often juggle separate tools for news, events, notes,
-              communication, and study resources. MediHub brings everything together
+              communication, and study resources. Medzae brings everything together
               in one seamless experience.
             </p>
           </div>
@@ -447,17 +447,17 @@ export default function LandingPage() {
                   lineHeight: 1.25,
                 }}
               >
-                &ldquo;MediHub finally gave us one <span className="serif-accent">calm space</span> for updates, discussions, and study
+                &ldquo;Medzae finally gave us one <span className="serif-accent">calm space</span> for updates, discussions, and study
                 resources without switching between apps.&rdquo;
               </blockquote>
               <div className="flex items-center gap-4">
                 <Avatar className="w-12 h-12 bg-[var(--color-navy)]">
                   <AvatarFallback className="bg-[var(--color-navy)] text-white text-sm font-semibold">
-                    MH
+                    MC
                   </AvatarFallback>
                 </Avatar>
                 <div>
-                  <p className="font-bold text-[var(--color-navy)]">MediHub Community Member</p>
+                  <p className="font-bold text-[var(--color-navy)]">Medzae Community Member</p>
                   <p className="text-sm text-[var(--color-text-muted)]">Medical Student</p>
                 </div>
               </div>
@@ -669,7 +669,7 @@ export default function LandingPage() {
             Ready to simplify your <span className="serif-accent">medical workflow</span>?
           </h2>
           <p className="text-base sm:text-lg text-[var(--color-text-secondary)] leading-relaxed mb-10">
-            Join thousands of medical professionals using MediHub to learn faster, collaborate better,
+            Join thousands of medical professionals using Medzae to learn faster, collaborate better,
             and stay organized.
           </p>
           <Link
@@ -695,7 +695,7 @@ export default function LandingPage() {
                 fontVariationSettings: "'opsz' 144, 'SOFT' 50, 'WONK' 1",
               }}
             >
-              Medi<span className="italic font-normal">Hub</span>
+              Med<span className="italic font-normal">zae</span>
             </p>
             <p className="text-xs text-white/50 mt-1.5 max-w-[260px] leading-relaxed">
               The medical learning platform for students, doctors, professors, and researchers.
@@ -718,7 +718,7 @@ export default function LandingPage() {
               Sign Up
             </Link>
           </div>
-          <p className="text-sm text-white/50">&copy; {new Date().getFullYear()} MediHub</p>
+          <p className="text-sm text-white/50">&copy; {new Date().getFullYear()} Medzae</p>
         </div>
       </footer>
     </div>

@@ -2,34 +2,35 @@
 // brand copy, and structured data used by layout metadata, robots.ts,
 // sitemap.ts, manifest.ts, and the JSON-LD blocks.
 
-// Public origin of the deployed site. Override with NEXT_PUBLIC_SITE_URL when
-// the project moves to a custom domain; canonicals, the sitemap, and Open
-// Graph URLs all follow it automatically.
+// Public origin of the deployed site. Still the original Vercel host — the
+// Medzae rebrand did not move the deployment. Override with
+// NEXT_PUBLIC_SITE_URL when the project moves to a custom domain; canonicals,
+// the sitemap, and Open Graph URLs all follow it automatically.
 export const SITE_URL = (
   process.env.NEXT_PUBLIC_SITE_URL || 'https://medihub-web.vercel.app'
 ).replace(/\/$/, '')
 
-export const SITE_NAME = 'MediHub'
+export const SITE_NAME = 'Medzae'
 export const SITE_TAGLINE = 'A practice for medical minds'
 
 // Title kept under ~60 chars so Google shows it untruncated; carries the
 // highest-value phrase ("medical platform") next to the brand.
-export const SITE_TITLE = 'MediHub — Medical Platform for Learning & Collaboration'
+export const SITE_TITLE = 'Medzae — Medical Platform for Learning & Collaboration'
 
 // Meta description ~160 chars: brand, audience, and feature keywords.
 export const SITE_DESCRIPTION =
-  'MediHub is the all-in-one medical hub for students, doctors, professors, and researchers — medical news, events, notebooks, groups, chat, and an AI study assistant.'
+  'Medzae is the all-in-one medical hub for students, doctors, professors, and researchers — medical news, events, notebooks, groups, chat, and an AI study assistant.'
 
 export const CONTACT_EMAIL = 'suva.neeja11@gmail.com'
 export const GITHUB_URL = 'https://github.com/11neeja/medihub'
 
-// Query phrases MediHub should surface for. Google ignores the keywords meta
+// Query phrases Medzae should surface for. Google ignores the keywords meta
 // tag but Bing and several AI crawlers still read it — costs nothing.
 export const SITE_KEYWORDS = [
-  'MediHub',
-  'medihub web',
-  'medihub website',
-  'medihub platform',
+  'Medzae',
+  'medzae web',
+  'medzae website',
+  'medzae platform',
   'medical platform',
   'medical hub',
   'health website',
@@ -60,7 +61,7 @@ export function jsonLd(data: object): string {
   return JSON.stringify(data).replace(/</g, '\\u003c')
 }
 
-// Site-wide structured data: who MediHub is (Organization), what the site is
+// Site-wide structured data: who Medzae is (Organization), what the site is
 // (WebSite, with alternate names matching common brand searches), and what
 // the product is (WebApplication). Rendered once in the root layout.
 export const SITE_GRAPH = {
@@ -80,7 +81,7 @@ export const SITE_GRAPH = {
       '@id': `${SITE_URL}/#website`,
       url: SITE_URL,
       name: SITE_NAME,
-      alternateName: ['Medi Hub', 'MediHub Web', 'MediHub Website', 'medihub-web'],
+      alternateName: ['Medzae Web', 'Medzae Website', 'medzae', 'Med Zae'],
       description: SITE_DESCRIPTION,
       inLanguage: 'en',
       publisher: { '@id': `${SITE_URL}/#organization` },

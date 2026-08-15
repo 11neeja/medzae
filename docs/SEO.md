@@ -1,4 +1,4 @@
-# MediHub SEO & Discoverability Guide
+# Medzae SEO & Discoverability Guide
 
 Everything technical is already wired into the frontend. This document explains
 what ships automatically and, more importantly, the **one-time manual steps**
@@ -16,7 +16,7 @@ until it is submitted to them once.
 | `robots.txt` | `src/app/robots.ts` | Welcomes Googlebot/Bingbot **and every major AI crawler by name** (GPTBot, ClaudeBot, PerplexityBot, Grok, Google-Extended, Meta, Amazon, Apple…); hides auth-only routes |
 | `sitemap.xml` | `src/app/sitemap.ts` | Lists `/`, `/signup`, `/login` for crawlers |
 | Web app manifest | `src/app/manifest.ts` | PWA identity (name, colors, icons) |
-| Structured data (JSON-LD) | root layout + landing page | `Organization`, `WebSite` (with alternate names like "medihub web"), `WebApplication`, and `FAQPage` — powers Google rich results and AI answer engines |
+| Structured data (JSON-LD) | root layout + landing page | `Organization`, `WebSite` (with alternate names like "medzae web"), `WebApplication`, and `FAQPage` — powers Google rich results and AI answer engines |
 | `llms.txt` | `frontend/public/llms.txt` | Plain-language site summary for AI assistants (ChatGPT, Claude, Perplexity) |
 
 The site origin defaults to `https://medihub-web.vercel.app`. When a custom
@@ -63,16 +63,18 @@ Search position is mostly decided by *who links to you*. Cheap, legitimate wins:
 
 ### 4. Optional but high-impact later
 
-- **Custom domain** (e.g. `medihub.health`, `getmedihub.com`): `vercel.app`
-  subdomains rank noticeably worse than owned domains, and several other
-  products worldwide are also named "MediHub" — an owned domain is the
-  single biggest lever for winning the brand query. When you buy one, set
-  `NEXT_PUBLIC_SITE_URL` and re-verify in Search Console.
+- **Custom domain** (e.g. `medzae.com`, `medzae.health`): `vercel.app`
+  subdomains rank noticeably worse than owned domains, and the site is still
+  served from the old `medihub-web` host, which now says nothing about the
+  brand — an owned `medzae` domain is the single biggest lever for winning
+  the brand query. "Medzae" is a coined name with almost no competing
+  results, so it should rank quickly once it has a matching domain. When you
+  buy one, set `NEXT_PUBLIC_SITE_URL` and re-verify in Search Console.
 - **Content**: a `/blog` or guides section targeting long-tail queries
   ("best note app for medical students", "how to keep up with medical
   news") is what eventually wins non-brand searches like "medical platform".
 
-## How AI search finds MediHub
+## How AI search finds Medzae
 
 - **Crawling**: `robots.txt` explicitly allows GPTBot, OAI-SearchBot,
   ClaudeBot, PerplexityBot, Grok/xAI, Google-Extended, Applebot, Amazonbot,
@@ -81,7 +83,7 @@ Search position is mostly decided by *who links to you*. Cheap, legitimate wins:
   feature list, `FAQPage`) + `llms.txt` give engines clean, quotable facts.
 - **Sourcing**: ChatGPT search rides on Bing, Perplexity/Claude fetch pages
   directly and both consult Google/Bing indexes — so steps 1–2 above are
-  what put MediHub in AI answers. Expect AI engines to pick the site up
+  what put Medzae in AI answers. Expect AI engines to pick the site up
   days-to-weeks after classic search does.
 
 ## Verifying it works

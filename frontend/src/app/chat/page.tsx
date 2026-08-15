@@ -1082,7 +1082,7 @@ export default function ChatPage() {
                   <div className="w-24 h-24 rounded-3xl mx-auto mb-6 flex items-center justify-center" style={{ background: 'var(--gradient-primary)', boxShadow: 'var(--shadow-btn)' }}>
                     <MessageCircle className="w-12 h-12 text-white" />
                   </div>
-                  <h2 className="heading-2 mb-3">Welcome to MediHub Chat</h2>
+                  <h2 className="heading-2 mb-3">Welcome to Medzae Chat</h2>
                   <p className="body-md mb-6 max-w-sm mx-auto">Select a conversation from the sidebar — or start a new one to begin collaborating with colleagues.</p>
                   <div className="flex flex-wrap gap-3 justify-center">
                     <button onClick={() => setShowNewChatModal(true)} className="btn-primary">

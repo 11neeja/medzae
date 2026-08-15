@@ -4,7 +4,7 @@ import type { Metadata } from 'next'
 // crawlers only ever see the session splash / login redirect.
 export const metadata: Metadata = {
   title: 'Opportunities',
-  description: 'Medical roles, internships, and research opportunities on MediHub.',
+  description: 'Medical roles, internships, and research opportunities on Medzae.',
   robots: { index: false, follow: true },
 }
 

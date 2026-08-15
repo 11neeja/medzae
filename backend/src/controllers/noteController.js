@@ -169,7 +169,7 @@ export const shareSubject = async (req, res) => {
           select: { id: true, name: true, email: true },
         })
     if (!recipient) {
-      return res.status(404).json({ message: 'That MediHub user could not be found' })
+      return res.status(404).json({ message: 'That Medzae user could not be found' })
     }
     if (recipient.id === req.user.id) {
       return res.status(400).json({ message: 'You already own this folder' })
