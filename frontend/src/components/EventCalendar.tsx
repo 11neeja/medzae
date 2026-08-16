@@ -118,6 +118,17 @@ const OVERFLOW_COLOR = { fill: '#64748B', name: 'slate' };
 
 const colorForIndex = (i: number) => (i < SPAN_COLORS.length ? SPAN_COLORS[i] : OVERFLOW_COLOR);
 
+// Geometry of the bar strip inside a day square.
+// The square is rounded-lg (8px). A full-width bar closer than that to the
+// bottom gets eaten by the corner arc — which is what made three bars read as
+// one buckled blob — so the strip starts at the radius, where the edges are
+// straight again.
+const BAR_H = 3;
+const BAR_GAP = 2;
+const STRIP_BOTTOM = 8;
+const MAX_BARS = 3;
+const stripHeight = (n: number) => n * BAR_H + Math.max(0, n - 1) * BAR_GAP;
+
 /** Inclusive day span between two UTC instants, capped against bad parses. */
 const MAX_SPAN_DAYS = 400;
 const daySpan = (startISO: string, endISO: string | null) => {
@@ -141,6 +152,13 @@ interface DayEntry {
   isLast: boolean;
   dayIndex: number;   // 1-based
   totalDays: number;
+  /**
+   * Fixed row within the day's bar strip, held for the event's whole span.
+   * Without this the strip re-stacks per day, so a three-day event would sit
+   * in the bottom row on a quiet day and the middle row on a busy one — the
+   * run zig-zags instead of reading as one continuous band.
+   */
+  lane: number;
 }
 
 /** Human range: "14–16 Aug 2026", or a single date when it's a one-day event. */
@@ -188,19 +206,46 @@ export default function EventCalendar({
   // square it covers — that is what makes a 14–16 Aug conference read as three
   // days rather than one. Undated ones are kept aside so they stay reachable
   // instead of silently vanishing from the calendar.
-  const { byDay, undated } = useMemo(() => {
+  const { byDay, undated, laneCount } = useMemo(() => {
     const map = new Map<string, DayEntry[]>();
     const none: EventRegistration[] = [];
-
+    const dated: EventRegistration[] = [];
     for (const reg of registrations) {
-      if (!reg.startAt) { none.push(reg); continue; }
-      const color = colorByKey.get(reg.eventKey) || OVERFLOW_COLOR;
-      const totalDays = daySpan(reg.startAt, reg.endAt);
+      (reg.startAt ? dated : none).push(reg);
+    }
 
-      for (let i = 0; i < totalDays; i += 1) {
-        const key = addUTCDays(reg.startAt, i);
+    // Lane packing. Earliest start first, longest first on ties, so the events
+    // that constrain the most days claim their lane before short ones fill it.
+    const ordered = [...dated].sort((a, b) => {
+      const byStart = Date.parse(a.startAt!) - Date.parse(b.startAt!);
+      if (byStart) return byStart;
+      const sa = daySpan(a.startAt!, a.endAt);
+      const sb = daySpan(b.startAt!, b.endAt);
+      if (sb !== sa) return sb - sa;
+      return a.eventKey.localeCompare(b.eventKey);
+    });
+
+    const occupancy = new Map<string, Set<number>>();
+    let maxLane = -1;
+
+    for (const reg of ordered) {
+      const totalDays = daySpan(reg.startAt!, reg.endAt);
+      const days: string[] = [];
+      for (let i = 0; i < totalDays; i += 1) days.push(addUTCDays(reg.startAt!, i));
+
+      // Lowest lane that is free on EVERY day this event covers.
+      let lane = 0;
+      while (days.some(d => occupancy.get(d)?.has(lane))) lane += 1;
+      if (lane > maxLane) maxLane = lane;
+
+      const color = colorByKey.get(reg.eventKey) || OVERFLOW_COLOR;
+      days.forEach((key, i) => {
+        const taken = occupancy.get(key) || new Set<number>();
+        taken.add(lane);
+        occupancy.set(key, taken);
+
         const entry: DayEntry = {
-          reg, color,
+          reg, color, lane,
           isFirst: i === 0,
           isLast: i === totalDays - 1,
           dayIndex: i + 1,
@@ -208,15 +253,18 @@ export default function EventCalendar({
         };
         const list = map.get(key);
         if (list) list.push(entry); else map.set(key, [entry]);
-      }
+      });
     }
 
-    // Longest-running first, so a week-long span keeps a stable row across the
-    // days it covers instead of hopping as short events come and go.
-    for (const list of map.values()) {
-      list.sort((a, b) => b.totalDays - a.totalDays || a.reg.eventKey.localeCompare(b.reg.eventKey));
-    }
-    return { byDay: map, undated: none };
+    for (const list of map.values()) list.sort((a, b) => a.lane - b.lane);
+
+    return {
+      byDay: map,
+      undated: none,
+      // Every square reserves the same number of rows, so bars line up across
+      // the grid and the day numbers all sit at the same height.
+      laneCount: Math.min(maxLane + 1, MAX_BARS),
+    };
   }, [registrations, colorByKey]);
 
   // "Coming up" includes events already under way — a conference on its second
@@ -265,6 +313,7 @@ export default function EventCalendar({
           isLast: totalDays === 1,
           dayIndex: 1,
           totalDays,
+          lane: 0, // unused in the list view; lanes only position grid bars
         };
       });
 
@@ -367,8 +416,14 @@ export default function EventCalendar({
 
                 // Up to three bars per square; a fourth event becomes "+N"
                 // rather than shrinking every bar into invisibility.
-                const shown = events.slice(0, 3);
-                const overflow = events.length - shown.length;
+                // Draw one row per reserved lane; a lane with nothing in it on
+                // this day renders as an invisible spacer so the lanes above
+                // and below stay put.
+                const lanes: (DayEntry | null)[] = Array.from(
+                  { length: laneCount },
+                  (_, i) => events.find(e => e.lane === i) || null
+                );
+                const overflow = events.filter(e => e.lane >= laneCount).length;
 
                 return (
                   <button
@@ -376,7 +431,7 @@ export default function EventCalendar({
                     onClick={() => setSelectedDay(isSelected ? null : key)}
                     disabled={!hasEvents && !isToday}
                     className={[
-                      'aspect-square rounded-lg flex flex-col items-center justify-center text-[0.75rem] sm:text-[0.8rem] transition-colors relative overflow-hidden',
+                      'aspect-square rounded-lg flex items-center justify-center text-[0.75rem] sm:text-[0.8rem] transition-colors relative overflow-hidden',
                       isSelected
                         ? 'bg-[var(--color-navy)] text-white font-semibold'
                         : hasEvents
@@ -386,6 +441,10 @@ export default function EventCalendar({
                             : 'text-[var(--color-text-soft)] cursor-default',
                       isToday && !isSelected ? 'ring-1 ring-[var(--color-accent)] ring-inset' : '',
                     ].join(' ')}
+                    // Reserve the strip's height so the number centres in the
+                    // space ABOVE the bars instead of colliding with them on a
+                    // small square.
+                    style={laneCount > 0 ? { paddingBottom: STRIP_BOTTOM + stripHeight(laneCount) } : undefined}
                     aria-label={
                       hasEvents
                         ? `${day} — ${events.length} event${events.length === 1 ? '' : 's'}: ${events.map(e => e.reg.title).join(', ')}`
@@ -393,36 +452,42 @@ export default function EventCalendar({
                     }
                     title={hasEvents ? events.map(e => e.reg.title).join('\n') : undefined}
                   >
-                    <span className="leading-none mb-0.5">{day}</span>
+                    <span className="leading-none">{day}</span>
+
+                    {/* Overflow count goes in the corner, not in the strip —
+                        inside it, the bars got squeezed to fit the text. */}
+                    {overflow > 0 && (
+                      <span className={`absolute top-[3px] right-[4px] text-[8px] leading-none font-semibold ${isSelected ? 'text-white/70' : 'text-[var(--color-text-soft)]'}`}>
+                        +{overflow}
+                      </span>
+                    )}
 
                     {hasEvents && (
-                      // Bars sit edge to edge so consecutive days of one event
+                      // Bars run edge to edge so consecutive days of one event
                       // read as a continuous run, with only the true first and
-                      // last day rounded. Each bar is a separate mark with a 2px
-                      // gap — that gap is what stops two events merging into a
-                      // single block, colour aside.
-                      <span className="absolute inset-x-0 bottom-1 flex flex-col gap-[2px] px-px">
-                        {shown.map((e) => (
+                      // last day rounded. They sit STRIP_BOTTOM up from the
+                      // bottom — clear of the 8px corner radius, which was
+                      // clipping their ends and making three bars look like one
+                      // buckled block. Each bar is its own mark with a 2px gap;
+                      // that gap is what stops two events merging, colour aside.
+                      <span
+                        className="absolute inset-x-0 flex flex-col"
+                        style={{ bottom: STRIP_BOTTOM, gap: BAR_GAP }}
+                      >
+                        {lanes.map((e, laneIdx) => (
                           <span
-                            key={e.reg.eventKey}
-                            className="h-[3px] w-full"
+                            key={laneIdx}
+                            className="w-full"
                             style={{
-                              background: e.color.fill,
-                              borderTopLeftRadius: e.isFirst ? 2 : 0,
-                              borderBottomLeftRadius: e.isFirst ? 2 : 0,
-                              borderTopRightRadius: e.isLast ? 2 : 0,
-                              borderBottomRightRadius: e.isLast ? 2 : 0,
-                              // A hairline of the surface keeps a bar legible
-                              // when it lands on the dark selected square.
-                              boxShadow: isSelected ? '0 0 0 0.5px rgba(255,255,255,0.5)' : undefined,
+                              height: BAR_H,
+                              background: e ? e.color.fill : 'transparent',
+                              borderTopLeftRadius: e?.isFirst ? 2 : 0,
+                              borderBottomLeftRadius: e?.isFirst ? 2 : 0,
+                              borderTopRightRadius: e?.isLast ? 2 : 0,
+                              borderBottomRightRadius: e?.isLast ? 2 : 0,
                             }}
                           />
                         ))}
-                        {overflow > 0 && (
-                          <span className={`text-[8px] leading-none font-semibold text-center ${isSelected ? 'text-white/80' : 'text-[var(--color-text-soft)]'}`}>
-                            +{overflow}
-                          </span>
-                        )}
                       </span>
                     )}
                   </button>
