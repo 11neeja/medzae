@@ -53,11 +53,12 @@ Browser                                Backend (Render)
      with no path and no trailing slash. A missing entry is the usual cause of
      the button failing silently:
      - `http://localhost:3000`
-     - `https://medzae.vercel.app`
-     - `https://medihub-web.vercel.app` (pre-rename host; only needed while it
-       still redirects)
-     - `https://medzae.com` and `https://www.medzae.com` once the domain is
-       bought
+     - `https://medzae.com` — the live site; without this, sign-in is broken
+       in production
+     - `https://www.medzae.com` (308s to the apex, but list it anyway — a
+       visitor who lands on `www` loads the button before the redirect)
+     - `https://medzae.vercel.app` and `https://medihub-web.vercel.app`
+       (pre-domain hosts; only needed while they still redirect)
    - Authorized redirect URIs: **leave empty** (not used by this flow).
 4. Copy the **Client ID** (`xxxxx.apps.googleusercontent.com`). There is a
    client secret on that page — it is **not needed anywhere**.

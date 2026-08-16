@@ -27,13 +27,6 @@ services:
       # (password reset, welcome). MUST be set or reset links point to localhost.
       - key: FRONTEND_URL
         sync: false
-      # Brevo (https://app.brevo.com) — primary mail provider, sent over HTTPS
-      # so it works even when Google blocks SMTP logins from Render's IPs.
-      # Free tier: 300 emails/day, no domain needed. Setup: verify
-      # SMTP_FROM_EMAIL under Senders, create an API key, paste it here.
-      # Gmail SMTP below stays as the automatic fallback.
-      - key: BREVO_API_KEY
-        sync: false
       # Gmail relay (Apps Script web app, backend/scripts/gmail-relay.gs):
       # free path to authenticated gmail.com inbox delivery over HTTPS.
       # URL is the deployed /exec URL; SECRET must match the script's constant.
@@ -41,12 +34,11 @@ services:
         sync: false
       - key: GMAIL_RELAY_SECRET
         sync: false
-      # gmail-relay first (inbox-grade delivery, ~100/day), brevo next (no
-      # small cap, but brevosend.com sender gets 421-deferred by Gmail until
-      # a real domain is authenticated), smtp last — Render cannot reach
-      # smtp.gmail.com (connection timeouts on 465/587).
+      # gmail-relay first (inbox-grade delivery, ~100/day), smtp last —
+      # Render cannot reach smtp.gmail.com (connection timeouts on 465/587),
+      # so it is effectively a local-dev-only provider.
       - key: MAIL_PROVIDER_ORDER
-        value: gmail-relay,brevo,smtp
+        value: gmail-relay,smtp
       # Gmail SMTP is fixed config, not a secret — pin it here so the only
       # dashboard-managed values are the account (SMTP_USER/SMTP_FROM_EMAIL)
       # and the app password (SMTP_PASS). 465 = implicit TLS, reliable on Render.

@@ -192,8 +192,7 @@ Set these environment variables on Render:
 - `JWT_SECRET`
 - `FRONTEND_URL` — deployed frontend URL; password-reset links break without it
 - `GMAIL_RELAY_URL` + `GMAIL_RELAY_SECRET` — free Gmail relay via Google Apps Script (deploy `backend/scripts/gmail-relay.gs`, instructions inside). Authenticated gmail.com mail straight to inboxes, ~100 recipients/day.
-- `BREVO_API_KEY` — HTTPS fallback with no small daily cap (free at https://app.brevo.com; verify `SMTP_FROM_EMAIL` under Senders first). Note: until a real domain is authenticated in Brevo, Gmail may defer its `brevosend.com` sender.
-- `MAIL_PROVIDER_ORDER` — optional; defaults to `gmail-relay,brevo,smtp`. Render cannot reach smtp.gmail.com, so keep smtp last there; locally `smtp,gmail-relay,brevo` is nice.
+- `MAIL_PROVIDER_ORDER` — optional; defaults to `gmail-relay,smtp`. Render cannot reach smtp.gmail.com, so keep smtp last there; locally `smtp,gmail-relay` is nice.
 - `SMTP_HOST`
 - `SMTP_PORT`
 - `SMTP_REQUIRE_TLS=true`

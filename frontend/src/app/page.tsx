@@ -25,7 +25,7 @@ import { jsonLd } from '@/lib/seo';
 
 // Where the "Get in touch" form is delivered (kept in sync with the backend
 // CONTACT_RECIPIENT_EMAIL default) and shown as the public contact address.
-const CONTACT_EMAIL = 'suva.neeja11@gmail.com';
+const CONTACT_EMAIL = 'contact@medzae.com';
 
 const ECOSYSTEM_PILLS = [
   'Medical Students',

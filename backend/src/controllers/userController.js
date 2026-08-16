@@ -212,7 +212,7 @@ export const forgotPassword = async (req, res) => {
 
     if (!hasMailConfig()) {
       return res.status(503).json({
-        message: 'Email service is not configured in production. Set BREVO_API_KEY or the SMTP_* variables in Render.',
+        message: 'Email service is not configured in production. Set GMAIL_RELAY_URL + GMAIL_RELAY_SECRET or the SMTP_* variables in Render.',
       })
     }
 

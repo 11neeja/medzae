@@ -13,11 +13,7 @@ dotenv.config()
 //      gmail.com mail) and reachable from hosts that block SMTP, but
 //      capped at ~100 recipients/day on consumer Gmail. Enabled by
 //      GMAIL_RELAY_URL + GMAIL_RELAY_SECRET.
-//   2. brevo — transactional mail over HTTPS (api.brevo.com, port 443).
-//      No daily send window that small, but free accounts get the sender
-//      rewritten to @<id>.brevosend.com, which Gmail often 421-defers
-//      until a real domain is authenticated. Enabled by BREVO_API_KEY.
-//   3. smtp — Gmail/Nodemailer with sanitized credentials and 465/587
+//   2. smtp — Gmail/Nodemailer with sanitized credentials and 465/587
 //      port fallback. Enabled by SMTP_HOST + SMTP_USER + SMTP_PASS.
 //      Unreachable from Render (connection timeouts), works locally.
 //
@@ -40,17 +36,15 @@ const smtpPass = () => {
   return isGmailHost(smtpHost()) || looksLikeAppPassword ? compact : raw
 }
 
-const brevoApiKey = () => trimmed(process.env.BREVO_API_KEY)
 const gmailRelayUrl = () => trimmed(process.env.GMAIL_RELAY_URL)
 const gmailRelaySecret = () => trimmed(process.env.GMAIL_RELAY_SECRET)
 
 export const hasSmtpConfig = () => Boolean(smtpHost() && smtpUser() && smtpPass())
-export const hasBrevoConfig = () => Boolean(brevoApiKey())
 export const hasGmailRelayConfig = () => Boolean(gmailRelayUrl() && gmailRelaySecret())
-export const hasMailConfig = () => hasGmailRelayConfig() || hasBrevoConfig() || hasSmtpConfig()
+export const hasMailConfig = () => hasGmailRelayConfig() || hasSmtpConfig()
 
 const NOT_CONFIGURED_HINT =
-  'Mail is not configured. Set GMAIL_RELAY_URL + GMAIL_RELAY_SECRET (Apps Script relay), BREVO_API_KEY, ' +
+  'Mail is not configured. Set GMAIL_RELAY_URL + GMAIL_RELAY_SECRET (Apps Script relay) ' +
   'or SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS in backend/.env (local) or the Render dashboard (production).'
 
 // ── Status + diagnostics — surfaced by /api/health and /api/users/test-email
@@ -188,93 +182,6 @@ const sendViaGmailRelay = async ({ to, subject, html, text, replyTo }) => {
   return { messageId: null }
 }
 
-// ── Provider: Brevo (HTTPS API) ─────────────────────────────────
-
-const describeBrevoFailure = (status, data) => {
-  const detail = data?.message || data?.code || data?.raw || ''
-
-  if (status === 401) {
-    return (
-      'Brevo rejected the API key (401). Create a key at https://app.brevo.com/settings/keys/api and set ' +
-      'BREVO_API_KEY where this server runs (production: Render dashboard; local: backend/.env).'
-    )
-  }
-
-  if (status === 400 && /sender/i.test(String(detail))) {
-    return (
-      `Brevo rejected the sender (${detail}). Verify ${getFromParts().email || 'SMTP_FROM_EMAIL'} under ` +
-      'Senders at https://app.brevo.com/senders/list — Brevo only sends from verified addresses.'
-    )
-  }
-
-  if (status === 402) {
-    return 'Brevo account is out of email credits (402). The free tier resets daily — check https://app.brevo.com.'
-  }
-
-  return `Brevo API error ${status}: ${detail || 'no detail'}`
-}
-
-const brevoRequest = async (path, { method = 'GET', body } = {}) => {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), Number(process.env.BREVO_TIMEOUT || 15000))
-
-  try {
-    const response = await fetch(`https://api.brevo.com/v3${path}`, {
-      method,
-      headers: {
-        'api-key': brevoApiKey(),
-        accept: 'application/json',
-        ...(body ? { 'content-type': 'application/json' } : {}),
-      },
-      body: body ? JSON.stringify(body) : undefined,
-      signal: controller.signal,
-    })
-
-    const text = await response.text()
-    let data = {}
-    try {
-      data = text ? JSON.parse(text) : {}
-    } catch {
-      data = { raw: text }
-    }
-
-    if (!response.ok) throw new Error(describeBrevoFailure(response.status, data))
-    return data
-  } catch (error) {
-    if (error.name === 'AbortError') {
-      throw new Error('Brevo API request timed out — check outbound HTTPS connectivity to api.brevo.com.')
-    }
-    if (error?.cause) {
-      const detail = error.cause.code || error.cause.message || 'network error'
-      throw new Error(`Brevo API unreachable (${detail}) — check outbound HTTPS connectivity.`)
-    }
-    throw error
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
-const sendViaBrevo = async ({ to, toName, subject, html, text, replyTo }) => {
-  const { email: fromEmail, name: fromName } = getFromParts()
-  if (!fromEmail) {
-    throw new Error('Brevo needs a sender address — set SMTP_FROM_EMAIL (or SMTP_USER) to the address verified in Brevo.')
-  }
-
-  const data = await brevoRequest('/smtp/email', {
-    method: 'POST',
-    body: {
-      sender: { email: fromEmail, name: fromName },
-      to: [{ email: to, ...(toName ? { name: toName } : {}) }],
-      ...(replyTo ? { replyTo: { email: replyTo } } : {}),
-      subject,
-      htmlContent: html,
-      textContent: text,
-    },
-  })
-
-  return { messageId: data.messageId || null }
-}
-
 // ── Provider: Gmail SMTP (Nodemailer) ───────────────────────────
 
 // Last transport config that actually worked; tried first on later sends
@@ -340,7 +247,8 @@ const describeSmtpFailure = (error) => {
       'Gmail rejected the login (535). Either the app password is wrong/revoked — regenerate at ' +
       'https://myaccount.google.com/apppasswords and update SMTP_PASS where this server runs — or Google is ' +
       'blocking sign-ins from this host\'s IP (common on cloud providers even with a valid app password). ' +
-      'If the same password works locally, set BREVO_API_KEY so mail goes over HTTPS instead.'
+      'If the same password works locally, use the Gmail relay (GMAIL_RELAY_URL + GMAIL_RELAY_SECRET) so ' +
+      'mail goes over HTTPS instead.'
     )
   }
 
@@ -411,28 +319,26 @@ const sendViaSmtp = async ({ label, to, subject, html, text, replyTo }) => {
 
 // ── Unified dispatch ────────────────────────────────────────────
 
-// Provider order (MAIL_PROVIDER_ORDER, default "gmail-relay,brevo,smtp").
+// Provider order (MAIL_PROVIDER_ORDER, default "gmail-relay,smtp").
 // gmail-relay first: authenticated gmail.com mail that reaches Gmail
-// inboxes, sent over HTTPS so it works from Render. Brevo next — no small
-// daily cap, but its @<id>.brevosend.com rewrite gets 421-deferred by
-// Gmail until a real domain is authenticated. SMTP last: best locally,
-// but unreachable from Render (connection timeouts on 465/587), so trying
-// it earlier there would only add 15s+ latency per send.
+// inboxes, sent over HTTPS so it works from Render. SMTP last: best
+// locally, but unreachable from Render (connection timeouts on 465/587),
+// so trying it earlier there would only add 15s+ latency per send.
 const getProviders = () => {
   const registry = {
     'gmail-relay': { name: 'gmail-relay', available: hasGmailRelayConfig, send: sendViaGmailRelay },
-    brevo: { name: 'brevo', available: hasBrevoConfig, send: sendViaBrevo },
     smtp: { name: 'smtp', available: hasSmtpConfig, send: sendViaSmtp },
   }
 
-  const order = trimmed(process.env.MAIL_PROVIDER_ORDER || 'gmail-relay,brevo,smtp')
+  const order = trimmed(process.env.MAIL_PROVIDER_ORDER || 'gmail-relay,smtp')
     .split(',')
     .map((name) => name.trim().toLowerCase())
     .filter(Boolean)
 
   // Always append every known provider so a typo in the env var can only
-  // change the order, never silently disable a configured provider.
-  return [...new Set([...order, 'gmail-relay', 'brevo', 'smtp'])]
+  // change the order, never silently disable a configured provider. Stale
+  // values naming a removed provider are ignored by the registry lookup.
+  return [...new Set([...order, 'gmail-relay', 'smtp'])]
     .map((name) => registry[name])
     .filter((provider) => provider && provider.available())
 }
@@ -475,16 +381,6 @@ export const verifyMailerConnection = async () => {
     } catch (error) {
       recordFailure('gmail-relay', 'Gmail relay verification', error)
       failures.push(`gmail-relay: ${sanitizeErrorMessage(error.message)}`)
-    }
-  }
-
-  if (hasBrevoConfig()) {
-    try {
-      const account = await brevoRequest('/account')
-      results.push(`brevo ok (${account.email || 'account verified'})`)
-    } catch (error) {
-      recordFailure('brevo', 'Brevo verification', error)
-      failures.push(`brevo: ${sanitizeErrorMessage(error.message)}`)
     }
   }
 
@@ -545,7 +441,7 @@ export const sendTestEmail = async ({ name, email }) =>
 // Where the landing-page "Get in touch" form is delivered. Overridable via
 // CONTACT_RECIPIENT_EMAIL (Render dashboard); defaults to the Medzae inbox.
 export const getContactRecipient = () =>
-  trimmed(process.env.CONTACT_RECIPIENT_EMAIL) || 'suva.neeja11@gmail.com'
+  trimmed(process.env.CONTACT_RECIPIENT_EMAIL) || 'contact@medzae.com'
 
 // Public contact form (POST /api/users/contact): delivered to the Medzae
 // inbox with the sender set as reply-to, so a reply goes straight to them.

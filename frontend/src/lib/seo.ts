@@ -2,14 +2,15 @@
 // brand copy, and structured data used by layout metadata, robots.ts,
 // sitemap.ts, manifest.ts, and the JSON-LD blocks.
 
-// Public origin of the deployed site. The Vercel project was renamed with the
-// brand, so medihub-web.vercel.app now only 307s here — pointing canonicals at
-// it made Google resolve every page to a redirect. Override with
-// NEXT_PUBLIC_SITE_URL when the project moves to a custom domain; canonicals,
-// the sitemap, robots, llms.txt, and Open Graph URLs all follow it
-// automatically, so the move to medzae.com is a one-variable change.
+// Public origin of the deployed site. medzae.com is the canonical host; both
+// vercel.app subdomains 308 to it. This must always name the host that serves
+// the site directly — an earlier default pointed at a subdomain that only
+// redirected, which made Google resolve every page to a redirect instead of
+// indexing it. Override with NEXT_PUBLIC_SITE_URL if the origin ever moves;
+// canonicals, the sitemap, robots, llms.txt, and Open Graph URLs all follow it
+// automatically.
 export const SITE_URL = (
-  process.env.NEXT_PUBLIC_SITE_URL || 'https://medzae.vercel.app'
+  process.env.NEXT_PUBLIC_SITE_URL || 'https://medzae.com'
 ).replace(/\/$/, '')
 
 export const SITE_NAME = 'Medzae'
@@ -23,7 +24,7 @@ export const SITE_TITLE = 'Medzae — Medical Platform for Learning & Collaborat
 export const SITE_DESCRIPTION =
   'Medzae is the all-in-one medical hub for students, doctors, professors, and researchers — medical news, events, notebooks, groups, chat, and an AI study assistant.'
 
-export const CONTACT_EMAIL = 'suva.neeja11@gmail.com'
+export const CONTACT_EMAIL = 'contact@medzae.com'
 export const GITHUB_URL = 'https://github.com/11neeja/medihub'
 
 // Query phrases Medzae should surface for. Google ignores the keywords meta

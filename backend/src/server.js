@@ -149,7 +149,7 @@ const startServer = async () => {
       .then((summary) => console.log('Mail delivery verified:', summary))
       .catch((error) => console.warn('Mail verification failed:', error.message))
   } else {
-    console.warn('Mail not configured; welcome/reset emails will not be sent. Set BREVO_API_KEY or SMTP_* in backend/.env (local) or the Render dashboard (production).')
+    console.warn('Mail not configured; welcome/reset emails will not be sent. Set GMAIL_RELAY_URL + GMAIL_RELAY_SECRET or SMTP_* in backend/.env (local) or the Render dashboard (production).')
   }
 
   // Pre-warm the external events cache in the background so the first visitor

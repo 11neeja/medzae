@@ -4,8 +4,9 @@
  * Sends Medzae's transactional mail (welcome / password reset) through the
  * real Gmail account over HTTPS, so it works from hosts that cannot reach
  * smtp.gmail.com (Render) and lands in inboxes as authenticated gmail.com
- * mail. Free; consumer Gmail allows ~100 recipients/day — the backend
- * automatically falls back to Brevo beyond that.
+ * mail. Free; consumer Gmail allows ~100 recipients/day — beyond that the
+ * backend falls back to SMTP, which Render cannot reach, so a day that busy
+ * effectively means no mail until the quota resets.
  *
  * SETUP (once, ~3 minutes, logged in as the Gmail account that should send):
  *  1. Open https://script.google.com → New project.
