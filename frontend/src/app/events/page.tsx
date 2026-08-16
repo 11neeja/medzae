@@ -1,9 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import ResizableSidebar from '@/components/ResizableSidebar';
-import { Microscope, GraduationCap, PartyPopper, Monitor, Zap, Target, Search, Plus, X, Calendar, Clock, MapPin, Star, Check, RefreshCw, ExternalLink, ChevronLeft, ChevronRight } from 'lucide-react';
-import { getEventsAPI, getExternalEventsAPI, refreshExternalEventsAPI, createEventAPI, toggleEventRegistrationAPI } from '@/lib/api';
+import ConfirmModal from '@/components/ConfirmModal';
+import EventCalendar from '@/components/EventCalendar';
+import { Microscope, GraduationCap, PartyPopper, Monitor, Zap, Target, Search, Plus, X, Calendar, CalendarDays, Clock, MapPin, Star, Check, RefreshCw, ExternalLink, ChevronLeft, ChevronRight } from 'lucide-react';
+import { getEventsAPI, getExternalEventsAPI, refreshExternalEventsAPI, createEventAPI, toggleEventRegistrationAPI, getMyEventRegistrationsAPI, confirmEventRegistrationAPI, cancelEventRegistrationAPI } from '@/lib/api';
+import type { EventRegistration } from '@/lib/api';
 
 // Event interface with comprehensive fields
 interface Event {
@@ -11,6 +14,8 @@ interface Event {
   title: string;
   organizer: string;
   date: string;
+  /** Last day, for events that run across several days. Blank = single day. */
+  endDate?: string;
   time: string;
   location: string;
   mode: 'Online' | 'On-campus' | 'Hybrid';
@@ -81,6 +86,68 @@ export default function EventsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const EVENTS_PER_PAGE = 5;
 
+  // ─── Registrations (the calendar's data) ─────────────────────────
+  // Registration is a server-side fact, never inferred from browsing. For
+  // external events we can't observe the source's own signup, so the only
+  // honest trigger is the user confirming it — `pendingConfirm` holds the
+  // event we've sent them off to register for, until they tell us either way.
+  const [registrations, setRegistrations] = useState<EventRegistration[]>([]);
+  const [isLoadingRegistrations, setIsLoadingRegistrations] = useState(true);
+  const [registrationsError, setRegistrationsError] = useState<string | null>(null);
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [pendingConfirm, setPendingConfirm] = useState<Event | null>(null);
+
+  // Registration writes used to fail silently (console.error only), so a failed
+  // POST looked identical to "nothing happened" — you click Yes and the
+  // calendar just stays empty. Never swallow these again.
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  // Turn an axios failure into something that names the actual cause, because
+  // the two likely ones need completely different fixes: a 404 means the
+  // backend is running code older than these routes, a 500 usually means the
+  // EventRegistration table isn't there yet (migration not applied).
+  const describeApiError = (err: unknown): string => {
+    const e = err as { response?: { status?: number; data?: { message?: string } }; message?: string };
+    const status = e?.response?.status;
+    if (status === 404) return 'Registration endpoint not found — the backend needs restarting with the latest code.';
+    if (status === 401) return 'Your session expired — sign in again.';
+    if (status === 500) {
+      const detail = e?.response?.data?.message || '';
+      if (/EventRegistration|does not exist|relation/i.test(detail)) {
+        return 'The registrations table is missing — run the database migration.';
+      }
+      return `Server error: ${detail || 'unknown'}`;
+    }
+    if (!e?.response) return 'Could not reach the server — is the backend running?';
+    return e?.response?.data?.message || e?.message || 'Something went wrong.';
+  };
+
+  const registeredKeys = new Set(registrations.map(r => r.eventKey));
+
+  const loadRegistrations = useCallback(async () => {
+    try {
+      setRegistrations(await getMyEventRegistrationsAPI());
+      setRegistrationsError(null);
+    } catch (err) {
+      console.error('Failed to load registrations:', err);
+      setRegistrationsError(describeApiError(err));
+    } finally {
+      setIsLoadingRegistrations(false);
+    }
+  }, []);
+
+  useEffect(() => { loadRegistrations(); }, [loadRegistrations]);
+
+  // Reminder emails link to /events?calendar=1 — open straight onto the calendar.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (new URLSearchParams(window.location.search).get('calendar')) setShowCalendar(true);
+  }, []);
+
   // ─── LocalStorage cache helpers ──────────────────────────────────
   // The cache is only used to paint something instantly on load; every visit
   // still fetches fresh events (see the effect below), so we never surface a
@@ -112,6 +179,7 @@ export default function EventsPage() {
     title: apiEvent.title,
     organizer: apiEvent.organizer,
     date: apiEvent.date,
+    endDate: apiEvent.endDate || '',
     time: apiEvent.time,
     location: apiEvent.location,
     mode: apiEvent.mode,
@@ -133,6 +201,7 @@ export default function EventsPage() {
     title: e.title,
     organizer: e.organizer || sourceLabel(e.source),
     date: e.date,
+    endDate: e.endDate || '',
     time: e.time || 'TBA',
     location: e.location || 'TBA',
     mode: e.mode || 'Online',
@@ -248,6 +317,7 @@ export default function EventsPage() {
     title: '',
     organizer: '',
     date: '',
+    endDate: '',
     time: '',
     location: '',
     mode: 'Online' as Event['mode'],
@@ -317,8 +387,13 @@ export default function EventsPage() {
     setCurrentPage(1);
   }, [searchQuery, typeFilter, modeFilter, dateFilter, sourceFilter, regionFilter]);
 
+  // Registration status for a card. Local events carry it on the payload
+  // (the Event.registeredUsers relation); external events only exist in a
+  // rotating cache, so theirs comes from the user's own registration rows.
+  const isRegisteredNow = (event: Event) => event.isRegistered || registeredKeys.has(event.id);
+
   // Get registered events
-  const registeredEvents = events.filter(e => e.isRegistered);
+  const registeredEvents = events.filter(isRegisteredNow);
   const featuredEvents = events.filter(e => e.featured);
 
   // Upcoming events (sorted by date, future only) for right sidebar
@@ -346,15 +421,27 @@ export default function EventsPage() {
     return eventDate >= startOfWeek && eventDate <= endOfWeek;
   }).length;
 
-  // Toggle registration via API (local events only)
+  // Toggle registration.
+  //
+  // Local events are a straight DB toggle. External events sign up on the
+  // source's own site, which we can never observe — so opening that site is
+  // treated as nothing more than opening a link, and the calendar entry is
+  // only written once the user comes back and confirms they went through with
+  // it. A click is not a registration; that distinction is the whole point.
   const handleRegister = async (eventId: string) => {
     const event = events.find(e => e.id === eventId);
-    // External events register on the source's own site — never via our DB.
+
     if (event && event.source !== 'local') {
+      if (registeredKeys.has(event.id)) {
+        await handleRemoveRegistration(event.id);
+        return;
+      }
       const url = event.externalUrl || event.eventbriteUrl;
       if (url) window.open(url, '_blank', 'noopener,noreferrer');
+      setPendingConfirm(event);
       return;
     }
+
     // For local events, toggle registration in DB
     try {
       const updated = await toggleEventRegistrationAPI(eventId);
@@ -363,8 +450,56 @@ export default function EventsPage() {
       if (selectedEvent && selectedEvent.id === eventId) {
         setSelectedEvent(mapped);
       }
+      // The backend mirrors local toggles into the calendar too.
+      loadRegistrations();
     } catch (err) {
       console.error('Failed to toggle registration:', err);
+    }
+  };
+
+  // The user came back and said yes — snapshot the event onto their calendar.
+  // The snapshot matters: this listing may be gone from the 24h external cache
+  // long before the event itself happens.
+  const handleConfirmRegistration = async () => {
+    const event = pendingConfirm;
+    setPendingConfirm(null);
+    if (!event) return;
+
+    try {
+      const created = await confirmEventRegistrationAPI({
+        eventKey: event.id,
+        source: event.source || 'local',
+        title: event.title,
+        organizer: event.organizer,
+        date: event.date,
+        endDate: event.endDate,
+        time: event.time,
+        location: event.location,
+        mode: event.mode,
+        type: event.type,
+        imageUrl: event.imageUrl,
+        externalUrl: event.externalUrl || event.eventbriteUrl,
+      });
+      setRegistrations(prev => [...prev.filter(r => r.eventKey !== created.eventKey), created]);
+      showToast(`Added to your calendar — reminders set for "${event.title}".`);
+    } catch (err) {
+      console.error('Failed to confirm registration:', err);
+      showToast(`Couldn't save that registration. ${describeApiError(err)}`, 'error');
+    }
+  };
+
+  const handleRemoveRegistration = async (eventKey: string) => {
+    const previous = registrations;
+    setRegistrations(prev => prev.filter(r => r.eventKey !== eventKey));
+    try {
+      await cancelEventRegistrationAPI(eventKey);
+      // A local event's own payload carries isRegistered — refresh it so the
+      // card and the calendar can't disagree.
+      setEvents(prev => prev.map(e => (e.id === eventKey ? { ...e, isRegistered: false } : e)));
+    } catch (err) {
+      console.error('Failed to remove registration:', err);
+      setRegistrations(previous); // put it back — the row still exists
+      showToast(`Couldn't remove that. ${describeApiError(err)}`, 'error');
     }
   };
 
@@ -381,6 +516,7 @@ export default function EventsPage() {
         title: '',
         organizer: '',
         date: '',
+        endDate: '',
         time: '',
         location: '',
         mode: 'Online',
@@ -420,6 +556,21 @@ export default function EventsPage() {
               )}
             </div>
             <div className="flex flex-wrap gap-3 shrink-0">
+              <button
+                onClick={() => setShowCalendar(true)}
+                className="btn-secondary inline-flex items-center gap-2 relative"
+                title="Your registered events and their reminders"
+                aria-label="My calendar"
+              >
+                <CalendarDays className="w-4 h-4 shrink-0" strokeWidth={1.75} />
+                {/* Three buttons don't fit a phone header — drop to "Calendar"
+                    below sm, keeping the count badge either way. */}
+                <span className="sm:hidden">Calendar</span>
+                <span className="hidden sm:inline">My calendar</span>
+                {registrations.length > 0 && (
+                  <span className="badge badge-sm badge-primary !py-0 !px-1.5 ml-0.5">{registrations.length}</span>
+                )}
+              </button>
               <button onClick={handleRefreshExternal} disabled={isRefreshing} className="btn-secondary inline-flex items-center gap-2 disabled:opacity-50" title="Refresh events from all sources">
                 <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} strokeWidth={1.75} />
                 Refresh
@@ -484,8 +635,14 @@ export default function EventsPage() {
 
               <div className="grid md:grid-cols-2 gap-5">
                 <div>
-                  <label className="field-label">Date <span className="text-red-500">*</span></label>
+                  <label className="field-label">Start date <span className="text-red-500">*</span></label>
                   <input type="date" required value={newEvent.date} onChange={(e) => setNewEvent({ ...newEvent, date: e.target.value })} className="input" />
+                </div>
+                <div>
+                  {/* Optional: set it and the event spans those days on the
+                      calendar. Reminders still fire off the start date only. */}
+                  <label className="field-label">End date <span className="text-[var(--color-text-soft)] normal-case">(multi-day events)</span></label>
+                  <input type="date" min={newEvent.date || undefined} value={newEvent.endDate} onChange={(e) => setNewEvent({ ...newEvent, endDate: e.target.value })} className="input" />
                 </div>
                 <div>
                   <label className="field-label">Time <span className="text-red-500">*</span></label>
@@ -567,7 +724,7 @@ export default function EventsPage() {
                 <div className="flex flex-wrap gap-1.5 mb-4">
                   <span className="badge">{selectedEvent.mode}</span>
                   <span className="badge badge-muted">{selectedEvent.type}</span>
-                  {selectedEvent.isRegistered && (
+                  {isRegisteredNow(selectedEvent) && (
                     <span className="badge badge-success inline-flex items-center gap-1">
                       <Check className="w-3 h-3" strokeWidth={2.5} /> Registered
                     </span>
@@ -637,13 +794,13 @@ export default function EventsPage() {
                 onClick={() => handleRegister(selectedEvent.id)}
                 className="btn-primary w-full !py-3.5 !text-sm"
               >
-                {selectedEvent.source !== 'local' ? (
+                {selectedEvent.source !== 'local' && !isRegisteredNow(selectedEvent) ? (
                   <span className="flex items-center justify-center gap-2">
                     <ExternalLink className="w-4 h-4" strokeWidth={1.75} /> Register on {sourceLabel(selectedEvent.source)}
                   </span>
-                ) : selectedEvent.isRegistered ? (
+                ) : isRegisteredNow(selectedEvent) ? (
                   <span className="flex items-center justify-center gap-2">
-                    <Check className="w-4 h-4" strokeWidth={2} /> Registered — tap to cancel
+                    <Check className="w-4 h-4" strokeWidth={2} /> Registered — tap to remove
                   </span>
                 ) : 'Register now'}
               </button>
@@ -948,7 +1105,7 @@ export default function EventsPage() {
                           <div className="flex flex-wrap items-center gap-2 mb-3">
                             <span className="badge badge-sm">{event.mode}</span>
                             <span className="badge badge-sm badge-muted">{event.type}</span>
-                            {event.isRegistered && (
+                            {isRegisteredNow(event) && (
                               <span className="badge badge-sm badge-success inline-flex items-center gap-1">
                                 <Check className="w-3 h-3" strokeWidth={2.5} /> Registered
                               </span>
@@ -1000,9 +1157,9 @@ export default function EventsPage() {
                             onClick={() => handleRegister(event.id)}
                             className="btn-primary flex-1 inline-flex items-center justify-center gap-1.5 !py-2.5"
                           >
-                            {event.source !== 'local' ? (
+                            {event.source !== 'local' && !isRegisteredNow(event) ? (
                               <><ExternalLink className="w-3.5 h-3.5" /> Register</>
-                            ) : event.isRegistered ? (
+                            ) : isRegisteredNow(event) ? (
                               <><Check className="w-3.5 h-3.5" /> Registered</>
                             ) : 'Register'}
                           </button>
@@ -1129,7 +1286,7 @@ export default function EventsPage() {
               <div className="space-y-0">
                 {[
                   { label: 'Total events', value: events.length },
-                  { label: 'Your registrations', value: registeredEvents.length },
+                  { label: 'Your registrations', value: registrations.length },
                   { label: 'This week', value: upcomingThisWeek },
                 ].map(({ label, value }, i, arr) => (
                   <div key={label} className={`flex items-baseline justify-between py-2.5 ${i < arr.length - 1 ? 'border-b border-[var(--color-border-hairline)]' : ''}`}>
@@ -1148,6 +1305,40 @@ export default function EventsPage() {
           </ResizableSidebar>
         </div>
       </div>
+
+      {/* The whole point of the feature: we open the source's site, then ask.
+          Only "Yes" writes a registration — a click on the link never does. */}
+      <ConfirmModal
+        open={!!pendingConfirm}
+        variant="info"
+        eyebrow="One more thing"
+        title="Did you finish registering?"
+        message={
+          pendingConfirm
+            ? `We opened ${sourceLabel(pendingConfirm.source)} in a new tab. If you completed registration for "${pendingConfirm.title}", we'll add it to your calendar and remind you 1 day before and on the morning of the event.`
+            : ''
+        }
+        confirmLabel="Yes, add to my calendar"
+        cancelLabel="Not yet"
+        onConfirm={handleConfirmRegistration}
+        onCancel={() => setPendingConfirm(null)}
+      />
+
+      <EventCalendar
+        open={showCalendar}
+        registrations={registrations}
+        loading={isLoadingRegistrations}
+        error={registrationsError}
+        onClose={() => setShowCalendar(false)}
+        onRemove={handleRemoveRegistration}
+      />
+
+      {toast && (
+        <div className="toast" data-type={toast.type} role="status">
+          <span className="toast-dot" />
+          {toast.message}
+        </div>
+      )}
     </div>
   );
 }

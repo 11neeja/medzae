@@ -388,6 +388,62 @@ export const toggleEventRegistrationAPI = async (id: string) => {
   return res.data
 }
 
+// ─── Event registrations (calendar) ────────────────────────────────
+// A registration is a snapshot of the event, not a pointer to it: external
+// events only exist in the backend's 24h cache, so the calendar has to keep
+// its own copy or entries would disappear when a source drops a listing.
+export interface EventRegistration {
+  id: string
+  eventKey: string
+  source: string
+  title: string
+  organizer: string | null
+  dateText: string | null
+  endDateText: string | null
+  timeText: string | null
+  location: string | null
+  mode: string | null
+  type: string | null
+  imageUrl: string | null
+  externalUrl: string | null
+  startAt: string | null
+  /** Last day of a multi-day event; null = single day. */
+  endAt: string | null
+  remindedDayBeforeAt: string | null
+  remindedDayOfAt: string | null
+  createdAt: string
+}
+
+export const getMyEventRegistrationsAPI = async (): Promise<EventRegistration[]> => {
+  const res = await api.get('/events/registrations')
+  return res.data
+}
+
+// Called only after the user confirms they actually completed registration on
+// the source's site — never on the click that opened it.
+export const confirmEventRegistrationAPI = async (data: {
+  eventKey: string
+  source?: string
+  title: string
+  organizer?: string
+  date?: string
+  endDate?: string
+  time?: string
+  location?: string
+  mode?: string
+  type?: string
+  imageUrl?: string
+  externalUrl?: string
+}): Promise<EventRegistration> => {
+  const res = await api.post('/events/registrations', data)
+  return res.data
+}
+
+export const cancelEventRegistrationAPI = async (eventKey: string) => {
+  const res = await api.delete(`/events/registrations/${encodeURIComponent(eventKey)}`)
+  return res.data
+}
+
 // ─── Chat API ──────────────────────────────────────────────────────
 export const getConversationsAPI = async () => {
   const res = await api.get('/chat/conversations')

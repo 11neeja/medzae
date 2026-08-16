@@ -87,6 +87,7 @@ export default function Navbar() {
       case 'group': return Users;
       case 'group_join_request': return UserPlus;
       case 'event': return CalendarClock;
+      case 'event_reminder': return CalendarClock;
       case 'system': return AlertCircle;
       default: return Bell;
     }

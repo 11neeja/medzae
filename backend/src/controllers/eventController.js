@@ -1,4 +1,6 @@
 import prisma from '../config/prisma.js'
+import { resolveStartAt, resolveEndAt, parseDevpostRange } from '../utils/eventSchedule.js'
+import { kickEventReminderSweep, runEventReminderSweep } from '../utils/eventReminders.js'
 
 // ─── Eventbrite cache (24-hour TTL) ────────────────────────────────
 const EVENTBRITE_TOKEN = process.env.EVENTBRITE_TOKEN
@@ -89,6 +91,9 @@ const mapDestinationEvent = (eb, imageUrl) => {
     title:            eb.name || 'Untitled Event',
     organizer:        'Eventbrite',
     date:             eb.start_date || '',
+    // Only meaningful when it differs from the start — Eventbrite sends
+    // end_date on single-day events too.
+    endDate:          eb.end_date && eb.end_date !== eb.start_date ? eb.end_date : '',
     time:             timeStr,
     location:         getLocation(eb.locations, eb.is_online_event),
     mode:             eb.is_online_event ? 'Online' : 'On-campus',
@@ -288,6 +293,9 @@ const fetchHackClubEvents = async () => {
         title: e.name || 'Untitled Hackathon',
         organizer: e.hack_club_event ? 'Hack Club' : 'Community Hackathon',
         date: e.start || '',
+        // Hackathons routinely run a weekend or longer; e.end is a full ISO
+        // instant, so the calendar can span it exactly.
+        endDate: e.end || '',
         time: start && end ? `${start} – ${end} UTC` : start ? `${start} UTC` : 'TBA',
         location,
         mode,
@@ -313,15 +321,6 @@ const fetchHackClubEvents = async () => {
 // ── Devpost: unofficial but stable JSON of hackathons (filtered to health-tech) ──
 const DEVPOST_URL = 'https://devpost.com/api/hackathons'
 
-// Parse Devpost date strings like "May 05 - Jun 11, 2026" → ISO start date.
-const parseDevpostDate = (str) => {
-  if (!str) return ''
-  const yearMatch = str.match(/\b(20\d{2})\b/)
-  const year = yearMatch ? yearMatch[1] : new Date().getFullYear()
-  const firstPart = str.split('-')[0].trim().replace(/,.*$/, '')
-  const d = new Date(`${firstPart} ${year}`)
-  return isNaN(d.getTime()) ? '' : d.toISOString()
-}
 
 const fetchDevpostEvents = async () => {
   const collected = []
@@ -347,12 +346,14 @@ const fetchDevpostEvents = async () => {
       ? (h.thumbnail_url.startsWith('//') ? `https:${h.thumbnail_url}` : h.thumbnail_url)
       : ''
     const prize = h.prize_amount ? String(h.prize_amount).replace(/<[^>]+>/g, '') : ''
+    const devpostRange = parseDevpostRange(h.submission_period_dates)
     return {
       _id: `dp-${h.id}`,
       id: `dp-${h.id}`,
       title: h.title || 'Untitled Hackathon',
       organizer: h.organization_name || 'Devpost',
-      date: parseDevpostDate(h.submission_period_dates),
+      date: devpostRange.start,
+      endDate: devpostRange.end,
       time: h.submission_period_dates || 'TBA',
       location,
       mode: isOnline ? 'Online' : 'On-campus',
@@ -506,13 +507,13 @@ export const getEvents = async (req, res) => {
 export const createEvent = async (req, res) => {
   try {
     const {
-      title, organizer, date, time, location, mode, type,
+      title, organizer, date, endDate, time, location, mode, type,
       shortDescription, longDescription, imageUrl, featured, capacity,
     } = req.body
 
     const event = await prisma.event.create({
       data: {
-        title, organizer, date, time, location, mode, type,
+        title, organizer, date, endDate: endDate || null, time, location, mode, type,
         shortDescription, longDescription, imageUrl, featured,
         capacity: capacity || 100,
         createdById: req.user.id,
@@ -547,6 +548,27 @@ export const toggleRegistration = async (req, res) => {
       include: { registeredUsers: { select: { id: true } } },
     })
 
+    // Mirror into EventRegistration so the calendar has one source of truth
+    // for local and external events alike, and so local events get reminders
+    // on the same path as everything else.
+    if (isRegistered) {
+      await deleteRegistration(req.user.id, event.id)
+    } else {
+      await upsertRegistration(req.user.id, {
+        eventKey: event.id,
+        source: 'local',
+        title: event.title,
+        organizer: event.organizer,
+        date: event.date,
+        endDate: event.endDate,
+        time: event.time,
+        location: event.location,
+        mode: event.mode,
+        type: event.type,
+        imageUrl: event.imageUrl,
+      })
+    }
+
     const { registeredUsers, ...rest } = updated
     res.json({
       ...rest,
@@ -554,6 +576,136 @@ export const toggleRegistration = async (req, res) => {
       registered: registeredUsers.length,
       isRegistered: registeredUsers.some(u => u.id === req.user.id),
     })
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+// ─── Registrations & calendar ──────────────────────────────────────
+// A registration is a snapshot, not a reference — see the EventRegistration
+// model comment. External events vanish from the 24h cache; the user's
+// calendar entry must not vanish with them.
+
+// Shape an event payload into the snapshot columns, resolving the start
+// instant that reminders are scheduled against.
+const toSnapshot = (payload) => {
+  const startAt = resolveStartAt({ date: payload.date, time: payload.time })
+  return {
+    source: payload.source || 'local',
+    title: payload.title,
+    organizer: payload.organizer || null,
+    dateText: payload.date || null,
+    endDateText: payload.endDate || null,
+    timeText: payload.time || null,
+    location: payload.location || null,
+    mode: payload.mode || null,
+    type: payload.type || null,
+    imageUrl: payload.imageUrl || null,
+    externalUrl: payload.externalUrl || null,
+    startAt,
+    endAt: resolveEndAt({ endDate: payload.endDate, time: payload.time }, startAt),
+  }
+}
+
+async function upsertRegistration(userId, payload) {
+  const snapshot = toSnapshot(payload)
+  const existing = await prisma.eventRegistration.findUnique({
+    where: { userId_eventKey: { userId, eventKey: payload.eventKey } },
+  })
+
+  // A moved event needs its already-sent reminders retired, otherwise the
+  // stamps from the old date suppress the reminders for the new one.
+  const startChanged =
+    existing && existing.startAt?.getTime() !== snapshot.startAt?.getTime()
+  const resetStamps = startChanged
+    ? { remindedDayBeforeAt: null, remindedDayOfAt: null }
+    : {}
+
+  return prisma.eventRegistration.upsert({
+    where: { userId_eventKey: { userId, eventKey: payload.eventKey } },
+    create: { userId, eventKey: payload.eventKey, ...snapshot },
+    update: { ...snapshot, ...resetStamps },
+  })
+}
+
+async function deleteRegistration(userId, eventKey) {
+  return prisma.eventRegistration.deleteMany({ where: { userId, eventKey } })
+}
+
+// @desc    List my registered events (drives the calendar)
+// @route   GET /api/events/registrations
+export const getMyRegistrations = async (req, res) => {
+  try {
+    const registrations = await prisma.eventRegistration.findMany({
+      where: { userId: req.user.id },
+      orderBy: [{ startAt: 'asc' }, { createdAt: 'asc' }],
+    })
+    // Opportunistic catch-up: if the instance has been asleep, this is often
+    // the first request after it wakes. Rate-limited and not awaited.
+    kickEventReminderSweep(req.app.get('io'))
+    res.json(registrations)
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+// @desc    Confirm a registration (the user says they completed it)
+// @route   POST /api/events/registrations
+export const confirmRegistration = async (req, res) => {
+  try {
+    const { eventKey, title } = req.body
+    if (!eventKey || !title) {
+      return res.status(400).json({ message: 'eventKey and title are required' })
+    }
+
+    const registration = await upsertRegistration(req.user.id, req.body)
+
+    // Keep the local-event counter honest when the confirmation came through
+    // this route rather than the toggle (external events have no Event row).
+    if ((req.body.source || 'local') === 'local') {
+      await prisma.event.update({
+        where: { id: eventKey },
+        data: { registeredUsers: { connect: { id: req.user.id } } },
+      }).catch(() => {}) // no Event row → nothing to keep in sync
+    }
+
+    res.status(201).json(registration)
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+// @desc    Remove a registration from my calendar
+// @route   DELETE /api/events/registrations/:eventKey
+export const cancelRegistration = async (req, res) => {
+  try {
+    const { eventKey } = req.params
+    await deleteRegistration(req.user.id, eventKey)
+    await prisma.event.update({
+      where: { id: eventKey },
+      data: { registeredUsers: { disconnect: { id: req.user.id } } },
+    }).catch(() => {}) // external event → no Event row to update
+
+    res.json({ message: 'Registration removed', eventKey })
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+// @desc    Run the reminder sweep now (for an external cron pinger)
+// @route   POST /api/events/reminders/run
+// Guarded by REMINDER_CRON_SECRET rather than a user session, so a scheduler
+// can call it. Unset secret = endpoint disabled, never open.
+export const runReminders = async (req, res) => {
+  const secret = process.env.REMINDER_CRON_SECRET
+  if (!secret) return res.status(404).json({ message: 'Not enabled' })
+
+  const provided = req.get('x-reminder-secret') || req.query.secret
+  if (provided !== secret) return res.status(401).json({ message: 'Unauthorized' })
+
+  try {
+    const result = await runEventReminderSweep(req.app.get('io'))
+    res.json({ message: 'Sweep complete', ...result })
   } catch (error) {
     res.status(500).json({ message: error.message })
   }

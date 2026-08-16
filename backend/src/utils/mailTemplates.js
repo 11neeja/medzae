@@ -91,3 +91,29 @@ export const buildPasswordResetEmail = ({ name, resetUrl }) => shell({
     <p style="margin:20px 0 0;font-size:12px;line-height:1.7;color:${theme.muted};word-break:break-all;">If the button does not work, copy and paste this link into your browser:<br>${resetUrl}</p>
   `,
 })
+
+// Reminder for an event the user confirmed they registered for. `lead` is
+// 'day-before' or 'day-of' — the only difference is the framing, since the
+// useful content (what, when, where, and the link back) is identical.
+// Event titles come from third-party feeds, so every interpolated value here
+// goes through esc() — Devpost and Eventbrite titles regularly contain "&".
+export const buildEventReminderEmail = ({ name, title, when, location, lead, eventUrl, calendarUrl }) => shell({
+  title: lead === 'day-of' ? 'Happening today' : 'Happening tomorrow',
+  subtitle: lead === 'day-of'
+    ? 'An event you registered for starts today.'
+    : 'An event you registered for starts tomorrow.',
+  body: `
+    <p style="margin:0 0 18px;font-size:16px;line-height:1.8;">Hi ${esc(name)},</p>
+    <p style="margin:0 0 18px;font-size:15px;line-height:1.8;">This is a reminder that you registered for the event below.</p>
+    <div style="background:${theme.softBlue};border:1px solid ${theme.border};border-radius:18px;padding:20px 22px;margin:24px 0;">
+      <p style="margin:0 0 10px;font-size:18px;font-weight:700;line-height:1.4;color:${theme.navy};">${esc(title)}</p>
+      <p style="margin:0;font-size:14px;line-height:1.9;color:${theme.text};">
+        <strong>When</strong> &nbsp;${esc(when)}<br>
+        <strong>Where</strong> &nbsp;${esc(location || 'To be announced')}
+      </p>
+    </div>
+    <a href="${esc(calendarUrl)}" style="display:inline-block;background:${theme.navy};color:#fff;text-decoration:none;padding:14px 24px;border-radius:14px;font-weight:700;margin-top:6px;">Open my calendar</a>
+    ${eventUrl ? `<p style="margin:20px 0 0;font-size:13px;line-height:1.7;color:${theme.muted};">Event page: <a href="${esc(eventUrl)}" style="color:${theme.blue};">${esc(eventUrl)}</a></p>` : ''}
+    <p style="margin:18px 0 0;font-size:12px;line-height:1.7;color:${theme.muted};">You are getting this because you marked yourself as registered on Medzae. Remove the event from your calendar to stop its reminders.</p>
+  `,
+})

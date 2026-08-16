@@ -22,6 +22,7 @@ import { hasMailConfig, verifyMailerConnection, getMailerStatus, getMailerDiagno
 import { getAIDiagnostics } from './controllers/aiController.js'
 import { hasGoogleAuthConfig } from './controllers/userController.js'
 import { warmExternalEvents } from './controllers/eventController.js'
+import { startEventReminderScheduler } from './utils/eventReminders.js'
 
 const app = express()
 const PORT = process.env.PORT || 5000
@@ -218,6 +219,11 @@ const startServer = async () => {
     console.error(err.stack)
     res.status(500).json({ message: 'Something went wrong!', error: err.message })
   })
+
+  // Event reminders (1 day before / morning of). The sweep recomputes what is
+  // due straight from the database, so starting it here also catches up on
+  // everything that came due while this instance was asleep.
+  startEventReminderScheduler(io)
 
   server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`)

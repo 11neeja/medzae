@@ -37,6 +37,7 @@ model User {
   documents        Document[]
   createdEvents    Event[]    @relation("EventCreator")
   registeredEvents Event[]    @relation("EventRegistrations")
+  eventRegistrations EventRegistration[]
 
   conversationMembers ConversationMember[]
   chatMessages        ChatMessage[]
@@ -220,6 +221,9 @@ model Event {
   title            String
   organizer        String?
   date             String
+  // Optional last day for events that run across several days. Same free-text
+  // shape as `date`; blank/absent means a single-day event.
+  endDate          String?
   time             String?
   location         String?
   mode             String   @default("Online")
@@ -235,6 +239,64 @@ model Event {
   createdById     String?
   createdBy       User?  @relation("EventCreator", fields: [createdById], references: [id])
   registeredUsers User[] @relation("EventRegistrations")
+}
+
+// A user's confirmed registration for an event — the single row that drives
+// the events calendar and its reminders, for local and external events alike.
+//
+// This deliberately stores a SNAPSHOT rather than a foreign key to Event.
+// External events (Eventbrite / Hack Club / Devpost) only ever exist in a
+// 24-hour in-memory cache and rotate out of it; keying on an id alone would
+// silently empty a user's calendar every time a source dropped a listing.
+// A registration is the user's fact, so it has to outlive the source's.
+model EventRegistration {
+  id       String @id @default(cuid())
+  userId   String
+  // Stable identity of the event: a local Event.id, or the prefixed external
+  // id ("eb-…", "hc-…", "dp-…"). Unique per user, so confirming twice is a
+  // no-op rather than a duplicate calendar entry.
+  eventKey String
+  source   String @default("local")
+
+  // ── Snapshot of the event as it looked when the user confirmed ──
+  title       String
+  organizer   String?
+  dateText    String?
+  endDateText String?
+  timeText    String?
+  location    String?
+  mode        String?
+  type        String?
+  imageUrl    String?
+  externalUrl String?
+
+  // Start instant resolved from dateText/timeText at write time. Null when the
+  // source gave nothing parseable — those rows still appear in the calendar's
+  // undated list, but can never fire a reminder (there is no time to fire at).
+  startAt DateTime?
+
+  // Last day of a multi-day event (conferences, and most Devpost hackathons —
+  // "May 05 - Jun 11, 2026" is a 38-day window). Null means single-day.
+  // Only the UTC calendar date is meaningful downstream: it decides how many
+  // squares the event covers in the calendar. Reminders deliberately ignore
+  // this and fire off startAt alone — you want telling once, before it begins,
+  // not once a day for six weeks.
+  endAt DateTime?
+
+  // Reminder bookkeeping. Each column is stamped as its reminder goes out,
+  // which is what makes the sweep idempotent: re-running it — on a schedule,
+  // on a cron ping, or right after Render wakes from sleep — cannot re-send.
+  remindedDayBeforeAt DateTime?
+  remindedDayOfAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, eventKey])
+  @@index([userId])
+  @@index([startAt])
 }
 
 model Document {

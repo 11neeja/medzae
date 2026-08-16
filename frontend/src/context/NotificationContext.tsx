@@ -12,7 +12,7 @@ import { useAuth } from '@/context/AuthContext';
 import { io, Socket } from 'socket.io-client';
 
 // Notification types
-export type NotificationType = 'chat' | 'feed' | 'group' | 'event' | 'system' | 'group_join_request';
+export type NotificationType = 'chat' | 'feed' | 'group' | 'event' | 'event_reminder' | 'system' | 'group_join_request';
 
 export interface Notification {
   id: string;

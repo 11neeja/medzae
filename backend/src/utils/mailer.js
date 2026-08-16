@@ -1,6 +1,6 @@
 import dotenv from 'dotenv'
 import nodemailer from 'nodemailer'
-import { buildWelcomeEmail, buildPasswordResetEmail, buildDiagnosticEmail, buildContactEmail } from './mailTemplates.js'
+import { buildWelcomeEmail, buildPasswordResetEmail, buildDiagnosticEmail, buildContactEmail, buildEventReminderEmail } from './mailTemplates.js'
 
 dotenv.config()
 
@@ -437,6 +437,21 @@ export const sendTestEmail = async ({ name, email }) =>
     html: buildDiagnosticEmail({ name }),
     text: 'Mail delivery from Medzae is working. Welcome and password-reset emails will reach users.',
   })
+
+// Event reminder (1 day before / morning of), sent by the reminder sweep in
+// utils/eventReminders.js. The sweep stamps the registration row before it
+// gets here, so a delivery failure costs the user this one email rather than
+// re-sending on every subsequent sweep.
+export const sendEventReminderEmail = async ({ name, email, title, when, location, lead, eventUrl }) => {
+  const calendarUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/events?calendar=1`
+  return deliver('Event reminder', {
+    to: email,
+    toName: name,
+    subject: lead === 'day-of' ? `Today — ${title}` : `Tomorrow — ${title}`,
+    html: buildEventReminderEmail({ name, title, when, location, lead, eventUrl, calendarUrl }),
+    text: `${lead === 'day-of' ? 'Today' : 'Tomorrow'}: ${title}\n${when}\n${location || ''}\n\nOpen your calendar: ${calendarUrl}`,
+  })
+}
 
 // Where the landing-page "Get in touch" form is delivered. Overridable via
 // CONTACT_RECIPIENT_EMAIL (Render dashboard); defaults to the Medzae inbox.

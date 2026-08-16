@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { Trash2, AlertTriangle, X } from 'lucide-react';
+import { Trash2, AlertTriangle, CalendarCheck, X } from 'lucide-react';
 
 interface ConfirmModalProps {
   open: boolean;
@@ -9,7 +9,11 @@ interface ConfirmModalProps {
   message: string;
   confirmLabel?: string;
   cancelLabel?: string;
-  variant?: 'danger' | 'warning';
+  // 'info' is for confirmations that aren't destructive — asking the user to
+  // vouch for something rather than warning them about it.
+  variant?: 'danger' | 'warning' | 'info';
+  // Overrides the small caps line above the title.
+  eyebrow?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -21,6 +25,7 @@ export default function ConfirmModal({
   confirmLabel = 'Delete',
   cancelLabel = 'Cancel',
   variant = 'danger',
+  eyebrow,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
@@ -39,10 +44,15 @@ export default function ConfirmModal({
 
   if (!open) return null;
 
-  const Icon = variant === 'danger' ? Trash2 : AlertTriangle;
-  const accentText = variant === 'danger' ? 'text-red-600' : 'text-amber-600';
-  const accentBorder = variant === 'danger' ? 'border-red-100' : 'border-amber-100';
-  const accentBg = variant === 'danger' ? 'bg-red-50/60' : 'bg-amber-50/60';
+  const Icon = variant === 'danger' ? Trash2 : variant === 'info' ? CalendarCheck : AlertTriangle;
+  const accentText =
+    variant === 'danger' ? 'text-red-600' : variant === 'info' ? 'text-[var(--color-accent)]' : 'text-amber-600';
+  const accentBorder =
+    variant === 'danger' ? 'border-red-100' : variant === 'info' ? 'border-[rgba(11,59,145,0.14)]' : 'border-amber-100';
+  const accentBg =
+    variant === 'danger' ? 'bg-red-50/60' : variant === 'info' ? 'bg-[var(--color-accent-soft)]' : 'bg-amber-50/60';
+  const defaultEyebrow =
+    variant === 'danger' ? 'Confirm delete' : variant === 'info' ? 'Confirm' : 'Heads up';
 
   return (
     <div
@@ -64,11 +74,11 @@ export default function ConfirmModal({
         </button>
 
         {/* Body */}
-        <div className="px-8 pt-8 pb-6">
+        <div className="px-5 sm:px-8 pt-7 sm:pt-8 pb-5 sm:pb-6">
           <div className={`w-11 h-11 rounded-xl ${accentBg} border ${accentBorder} flex items-center justify-center mb-5`}>
             <Icon className={`w-5 h-5 ${accentText}`} strokeWidth={1.75} />
           </div>
-          <p className="label !mb-2">{variant === 'danger' ? 'Confirm delete' : 'Heads up'}</p>
+          <p className="label !mb-2">{eyebrow || defaultEyebrow}</p>
           <h2
             className="text-[var(--color-navy)] mb-2.5"
             style={{
@@ -84,18 +94,21 @@ export default function ConfirmModal({
           <p className="body-md leading-relaxed">{message}</p>
         </div>
 
-        {/* Actions */}
-        <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-[var(--color-border-hairline)] bg-[var(--color-surface-elevated)]">
+        {/* Actions. Side by side once there's room; stacked full-width on a
+            phone, where a long confirm label ("Yes, add to my calendar")
+            otherwise wraps to a second line and leaves the two buttons
+            staggered. Confirm sits at the bottom, nearest the thumb. */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2 px-4 sm:px-6 py-3.5 sm:py-4 border-t border-[var(--color-border-hairline)] bg-[var(--color-surface-elevated)]">
           <button
             ref={cancelRef}
             onClick={onCancel}
-            className="btn-secondary"
+            className="btn-secondary w-full sm:w-auto"
           >
             {cancelLabel}
           </button>
           <button
             onClick={onConfirm}
-            className="btn-primary"
+            className="btn-primary w-full sm:w-auto"
           >
             {confirmLabel}
           </button>
