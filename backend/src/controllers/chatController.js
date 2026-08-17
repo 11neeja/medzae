@@ -16,7 +16,7 @@ export const getConversations = async (req, res) => {
             members: {
               include: {
                 user: {
-                  select: { id: true, name: true, email: true, role: true },
+                  select: { id: true, name: true, email: true, role: true, avatarUrl: true },
                 },
               },
             },
@@ -25,7 +25,7 @@ export const getConversations = async (req, res) => {
               take: 1,
               include: {
                 sender: {
-                  select: { id: true, name: true },
+                  select: { id: true, name: true, avatarUrl: true },
                 },
               },
             },
@@ -106,7 +106,7 @@ export const getMessages = async (req, res) => {
       orderBy: { createdAt: 'asc' },
       include: {
         sender: {
-          select: { id: true, name: true, email: true, role: true },
+          select: { id: true, name: true, email: true, role: true, avatarUrl: true },
         },
       },
     })
@@ -160,7 +160,7 @@ export const sendMessage = async (req, res) => {
       },
       include: {
         sender: {
-          select: { id: true, name: true, email: true, role: true },
+          select: { id: true, name: true, email: true, role: true, avatarUrl: true },
         },
       },
     })
@@ -276,7 +276,7 @@ export const sendFileMessage = async (req, res) => {
       },
       include: {
         sender: {
-          select: { id: true, name: true, email: true, role: true },
+          select: { id: true, name: true, email: true, role: true, avatarUrl: true },
         },
       },
     })
@@ -346,7 +346,7 @@ export const createPrivateConversation = async (req, res) => {
     // Check if other user exists
     const otherUser = await prisma.user.findUnique({
       where: { id: otherUserId },
-      select: { id: true, name: true, email: true, role: true },
+      select: { id: true, name: true, email: true, role: true, avatarUrl: true },
     })
     if (!otherUser) {
       return res.status(404).json({ message: 'User not found' })
@@ -392,7 +392,7 @@ export const createPrivateConversation = async (req, res) => {
         members: {
           include: {
             user: {
-              select: { id: true, name: true, email: true, role: true },
+              select: { id: true, name: true, email: true, role: true, avatarUrl: true },
             },
           },
         },
@@ -445,7 +445,7 @@ export const createGroupConversation = async (req, res) => {
         members: {
           include: {
             user: {
-              select: { id: true, name: true, email: true, role: true },
+              select: { id: true, name: true, email: true, role: true, avatarUrl: true },
             },
           },
         },
@@ -615,7 +615,7 @@ export const addGroupMembers = async (req, res) => {
     // Verify all new members exist
     const users = await prisma.user.findMany({
       where: { id: { in: newMemberIds } },
-      select: { id: true, name: true, email: true, role: true },
+      select: { id: true, name: true, email: true, role: true, avatarUrl: true },
     })
     if (users.length !== newMemberIds.length) {
       return res.status(400).json({ message: 'Some users not found' })
@@ -652,7 +652,7 @@ export const addGroupMembers = async (req, res) => {
       include: {
         members: {
           include: {
-            user: { select: { id: true, name: true, email: true, role: true } },
+            user: { select: { id: true, name: true, email: true, role: true, avatarUrl: true } },
           },
         },
       },
@@ -741,7 +741,7 @@ export const removeGroupMember = async (req, res) => {
       include: {
         members: {
           include: {
-            user: { select: { id: true, name: true, email: true, role: true } },
+            user: { select: { id: true, name: true, email: true, role: true, avatarUrl: true } },
           },
         },
       },
@@ -779,7 +779,7 @@ export const searchUsers = async (req, res) => {
           },
         ],
       },
-      select: { id: true, name: true, email: true, role: true },
+      select: { id: true, name: true, email: true, role: true, avatarUrl: true },
       take: 20,
     })
     res.json(users)
@@ -813,7 +813,7 @@ export const getSharedFiles = async (req, res) => {
       orderBy: { createdAt: 'desc' },
       include: {
         sender: {
-          select: { id: true, name: true },
+          select: { id: true, name: true, avatarUrl: true },
         },
       },
     })
@@ -916,7 +916,7 @@ export const handleJoinRequest = async (req, res) => {
           include: { members: true },
         },
         user: {
-          select: { id: true, name: true },
+          select: { id: true, name: true, avatarUrl: true },
         },
       },
     })
@@ -1005,10 +1005,10 @@ export const getPendingJoinRequests = async (req, res) => {
       },
       include: {
         user: {
-          select: { id: true, name: true, email: true, role: true },
+          select: { id: true, name: true, email: true, role: true, avatarUrl: true },
         },
         conversation: {
-          select: { id: true, name: true },
+          select: { id: true, name: true, avatarUrl: true },
         },
       },
       orderBy: { createdAt: 'desc' },

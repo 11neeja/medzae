@@ -28,6 +28,45 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // ── Profile ────────────────────────────────────────────────────────
+  // Avatar is always an explicit choice: either an uploaded photo URL or
+  // the id of a preset from the frontend catalog (`preset:<id>`). Null
+  // means "no avatar yet" and renders as initials.
+  avatarUrl      String?
+  headline       String?
+  bio            String?
+  // Profession: student | doctor | professor | researcher | other.
+  // This decides which of the fields below the profile form asks for and how
+  // they are labelled — a student's "College" and a doctor's "Hospital" are
+  // the same `institution` column wearing different names.
+  careerStage    String?
+  institution    String?
+  // Specialty (doctor) / department (professor) / research area (researcher)
+  specialty      String?
+  // Degree or course: MBBS, MD, PhD…
+  qualification  String?
+  // Current title: Resident, Consultant, Associate Professor…
+  designation    String?
+  yearsExperience Int?
+  // Students only.
+  studyYear      String?
+  graduationYear Int?
+  city           String?
+  country        String?
+  websiteUrl     String?
+  linkedinUrl    String?
+  twitterUrl     String?
+
+  // Every profile is private until the owner opts in. `showEmail` is a
+  // second gate: a public profile still hides the email unless asked.
+  isProfilePublic Boolean @default(false)
+  showEmail       Boolean @default(false)
+
+  // Pending email change, confirmed by a link mailed to the NEW address.
+  pendingEmail       String?
+  emailChangeToken   String?   @unique
+  emailChangeExpires DateTime?
+
   posts            Post[]     @relation("AuthorPosts")
   likedPosts       Post[]     @relation("PostLikes")
   bookmarkedPosts  Post[]     @relation("PostBookmarks")

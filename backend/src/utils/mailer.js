@@ -1,6 +1,6 @@
 import dotenv from 'dotenv'
 import nodemailer from 'nodemailer'
-import { buildWelcomeEmail, buildPasswordResetEmail, buildDiagnosticEmail, buildContactEmail, buildEventReminderEmail } from './mailTemplates.js'
+import { buildWelcomeEmail, buildPasswordResetEmail, buildEmailChangeEmail, buildDiagnosticEmail, buildContactEmail, buildEventReminderEmail } from './mailTemplates.js'
 
 dotenv.config()
 
@@ -425,6 +425,17 @@ export const sendPasswordResetEmail = async ({ name, email, resetUrl }) =>
     subject: 'Reset your Medzae password',
     html: buildPasswordResetEmail({ name, resetUrl }),
     text: `Reset your Medzae password: ${resetUrl}`,
+  })
+
+// Email change confirmation — always delivered to the NEW address, which is
+// what proves the user actually owns it.
+export const sendEmailChangeEmail = async ({ name, newEmail, confirmUrl }) =>
+  deliver('Email change confirmation', {
+    to: newEmail,
+    toName: name,
+    subject: 'Confirm your new Medzae email',
+    html: buildEmailChangeEmail({ name, confirmUrl, newEmail }),
+    text: `Confirm your new Medzae email address: ${confirmUrl}`,
   })
 
 // One-click production probe (POST /api/users/test-email): sends to the

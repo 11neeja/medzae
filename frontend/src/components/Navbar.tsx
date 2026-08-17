@@ -21,20 +21,25 @@ import {
   AlertCircle,
   Briefcase,
   Menu,
-  LogOut
+  LogOut,
+  UserCircle
 } from 'lucide-react';
+import { UserAvatar } from '@/components/ui/user-avatar';
 
 export default function Navbar() {
-  const { isAuthenticated, logout } = useAuth();
+  const { isAuthenticated, logout, user } = useAuth();
   const { notifications, unreadCount, markAsRead, clearAll, handleJoinRequest } = useNotifications();
   const router = useRouter();
   const pathname = usePathname();
   const [showNotifications, setShowNotifications] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [showAccountMenu, setShowAccountMenu] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
+  const accountRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setShowMobileMenu(false);
+    setShowAccountMenu(false);
   }, [pathname]);
 
   useEffect(() => {
@@ -55,6 +60,25 @@ export default function Navbar() {
       document.removeEventListener('click', handleClickOutside);
     };
   }, [showNotifications]);
+
+  useEffect(() => {
+    if (!showAccountMenu) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (accountRef.current && !accountRef.current.contains(event.target as Node)) {
+        setShowAccountMenu(false);
+      }
+    };
+
+    const timer = window.setTimeout(() => {
+      document.addEventListener('click', handleClickOutside);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('click', handleClickOutside);
+    };
+  }, [showAccountMenu]);
 
   if (pathname === '/login' || pathname === '/signup') {
     return null;
@@ -326,13 +350,63 @@ export default function Navbar() {
                 )}
               </div>
 
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="hidden md:inline-flex btn-primary !py-2 !px-4 text-[0.8125rem] shrink-0"
-              >
-                Logout
-              </button>
+              {/* Account menu — the avatar is the entry point to the profile,
+                  which is also where "log out" now lives. */}
+              <div className="relative shrink-0 hidden md:block" ref={accountRef}>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowAccountMenu((open) => !open);
+                  }}
+                  className="flex items-center rounded-full p-0.5 hover:bg-[var(--color-accent-soft)] transition-smooth"
+                  aria-label="Your account"
+                  aria-expanded={showAccountMenu}
+                  aria-haspopup="true"
+                >
+                  <UserAvatar
+                    userId={user?._id || ''}
+                    name={user?.name}
+                    avatarUrl={user?.avatarUrl}
+                    size={30}
+                    className="ring-1 ring-[var(--color-border-hairline)]"
+                  />
+                </button>
+
+                {showAccountMenu && (
+                  <div
+                    className="absolute right-0 top-full mt-3 w-60 bg-[var(--color-surface-white)] rounded-xl overflow-hidden z-[200] border border-[var(--color-border-hairline)]"
+                    style={{ boxShadow: 'var(--shadow-modal)' }}
+                    role="menu"
+                  >
+                    <div className="px-4 py-3.5 border-b border-[var(--color-border-hairline)]">
+                      <p className="text-sm font-semibold text-[var(--color-navy)] truncate">
+                        {user?.name}
+                      </p>
+                      <p className="text-xs text-[var(--color-text-muted)] truncate mt-0.5">
+                        {user?.email}
+                      </p>
+                    </div>
+                    <Link
+                      href="/profile"
+                      role="menuitem"
+                      className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-[var(--color-text-body)] hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-navy)] transition-smooth"
+                    >
+                      <UserCircle className="w-4 h-4" strokeWidth={1.75} />
+                      Your profile
+                    </Link>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={handleLogout}
+                      className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-[var(--color-text-body)] hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-navy)] transition-smooth border-t border-[var(--color-border-hairline)]"
+                    >
+                      <LogOut className="w-4 h-4" strokeWidth={1.75} />
+                      Log out
+                    </button>
+                  </div>
+                )}
+              </div>
 
               <button
                 type="button"
@@ -391,7 +465,20 @@ export default function Navbar() {
               );
             })}
           </nav>
-          <div className="px-4 py-3 border-t border-[var(--color-border-hairline)]">
+          <div className="px-4 py-3 border-t border-[var(--color-border-hairline)] space-y-2">
+            <Link
+              href="/profile"
+              onClick={() => setShowMobileMenu(false)}
+              className="flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-smooth text-[var(--color-text-body)] hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-navy)]"
+            >
+              <UserAvatar
+                userId={user?._id || ''}
+                name={user?.name}
+                avatarUrl={user?.avatarUrl}
+                size={22}
+              />
+              <span className="truncate">{user?.name || 'Your profile'}</span>
+            </Link>
             <button
               type="button"
               onClick={() => {

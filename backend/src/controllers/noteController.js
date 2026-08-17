@@ -162,11 +162,11 @@ export const shareSubject = async (req, res) => {
     const recipient = userId
       ? await prisma.user.findUnique({
           where: { id: userId },
-          select: { id: true, name: true, email: true },
+          select: { id: true, name: true, email: true, avatarUrl: true },
         })
       : await prisma.user.findFirst({
           where: { email: { equals: email, mode: 'insensitive' } },
-          select: { id: true, name: true, email: true },
+          select: { id: true, name: true, email: true, avatarUrl: true },
         })
     if (!recipient) {
       return res.status(404).json({ message: 'That Medzae user could not be found' })
@@ -234,7 +234,7 @@ export const getSubjectShares = async (req, res) => {
     const subject = decodeURIComponent(req.params.name)
     const shares = await prisma.folderShare.findMany({
       where: { ownerId: req.user.id, subject },
-      include: { sharedWith: { select: { id: true, name: true, email: true } } },
+      include: { sharedWith: { select: { id: true, name: true, email: true, avatarUrl: true } } },
       orderBy: { createdAt: 'asc' },
     })
     res.json(
@@ -289,7 +289,7 @@ export const getSharedSubjects = async (req, res) => {
   try {
     const shares = await prisma.folderShare.findMany({
       where: { sharedWithId: req.user.id },
-      include: { owner: { select: { id: true, name: true, email: true } } },
+      include: { owner: { select: { id: true, name: true, email: true, avatarUrl: true } } },
       orderBy: { createdAt: 'desc' },
     })
     res.json(

@@ -14,7 +14,7 @@ export const getOpportunities = async (req, res) => {
       where,
       orderBy: { createdAt: 'desc' },
       include: {
-        user: { select: { id: true, name: true } },
+        user: { select: { id: true, name: true, avatarUrl: true } },
         _count: { select: { applications: true } },
       },
     })
@@ -48,7 +48,7 @@ export const createOpportunity = async (req, res) => {
         userId: req.user.id,
       },
       include: {
-        user: { select: { id: true, name: true } },
+        user: { select: { id: true, name: true, avatarUrl: true } },
         _count: { select: { applications: true } },
       },
     })

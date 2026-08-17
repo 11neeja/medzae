@@ -3,11 +3,36 @@
 import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { loginAPI, registerAPI, googleLoginAPI, getMeAPI, checkBackendHealth } from '@/lib/api';
 
-interface User {
+export interface User {
   _id: string;
   name: string;
   email: string;
   role?: string;
+  createdAt?: string;
+  /** Absolute URL of an uploaded photo, or `preset:<id>` from the catalog. */
+  avatarUrl?: string | null;
+  headline?: string | null;
+  bio?: string | null;
+  /** Profession: student | doctor | professor | researcher | other. */
+  careerStage?: string | null;
+  institution?: string | null;
+  specialty?: string | null;
+  qualification?: string | null;
+  designation?: string | null;
+  yearsExperience?: number | null;
+  studyYear?: string | null;
+  graduationYear?: number | null;
+  city?: string | null;
+  country?: string | null;
+  websiteUrl?: string | null;
+  linkedinUrl?: string | null;
+  twitterUrl?: string | null;
+  isProfilePublic?: boolean;
+  showEmail?: boolean;
+  /** Set while an email change is awaiting confirmation at the new address. */
+  pendingEmail?: string | null;
+  /** False for accounts created through Google that never set a password. */
+  hasPassword?: boolean;
 }
 
 interface AuthContextType {
@@ -22,6 +47,10 @@ interface AuthContextType {
   loginWithGoogle: (credential: string, rememberMe?: boolean) => Promise<void>;
   logout: () => void;
   clearError: () => void;
+  /** Merge freshly saved profile fields into the session without a refetch. */
+  applyUserUpdate: (patch: Partial<User>) => void;
+  /** Re-read the account from the API (after an email change, say). */
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -149,7 +178,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const data = await loginAPI(email, password, rememberMe);
       storeToken(data.token, rememberMe);
-      setUser({ _id: data._id, name: data.name, email: data.email });
+      setUser({ _id: data._id, name: data.name, email: data.email, avatarUrl: data.avatarUrl ?? null });
       setIsAuthenticated(true);
       setBackendConnected(true);
       setDbConnected(true);
@@ -167,7 +196,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const data = await registerAPI(name, email, password, rememberMe);
       storeToken(data.token, rememberMe);
-      setUser({ _id: data._id, name: data.name, email: data.email });
+      setUser({ _id: data._id, name: data.name, email: data.email, avatarUrl: data.avatarUrl ?? null });
       setIsAuthenticated(true);
       setBackendConnected(true);
       setDbConnected(true);
@@ -188,7 +217,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const data = await googleLoginAPI(credential, rememberMe);
       storeToken(data.token, rememberMe);
-      setUser({ _id: data._id, name: data.name, email: data.email });
+      setUser({ _id: data._id, name: data.name, email: data.email, avatarUrl: data.avatarUrl ?? null });
       setIsAuthenticated(true);
       setBackendConnected(true);
       setDbConnected(true);
@@ -209,6 +238,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const clearError = () => setError(null);
 
+  // Profile saves return the updated record, so the session can be patched in
+  // place — the navbar avatar and name change the moment the save lands.
+  const applyUserUpdate = useCallback((patch: Partial<User>) => {
+    setUser((current) => (current ? { ...current, ...patch } : current));
+  }, []);
+
+  const refreshUser = useCallback(async () => {
+    try {
+      const userData = await getMeAPI();
+      setUser(userData);
+      setIsAuthenticated(true);
+    } catch {
+      // Leave the current session alone — a failed refresh is not a logout.
+    }
+  }, []);
+
   return (
     <AuthContext.Provider
       value={{
@@ -223,6 +268,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loginWithGoogle,
         logout,
         clearError,
+        applyUserUpdate,
+        refreshUser,
       }}
     >
       {children}

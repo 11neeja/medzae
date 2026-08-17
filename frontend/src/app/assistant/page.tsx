@@ -803,7 +803,7 @@ export default function AssistantPage() {
                         <div className="flex-shrink-0">
                           {isUser ? (
                             <div className="w-9 h-9 rounded-full overflow-hidden ring-2 ring-white shadow-sm">
-                              <UserAvatar userId={user?._id || 'current-user'} name={user?.name || 'You'} size={36} />
+                              <UserAvatar userId={user?._id || 'current-user'} name={user?.name || 'You'} avatarUrl={user?.avatarUrl} size={36} />
                             </div>
                           ) : (
                             <div className="w-9 h-9 rounded-full flex items-center justify-center relative" style={{ background: 'var(--gradient-primary)', boxShadow: 'var(--shadow-btn)' }}>

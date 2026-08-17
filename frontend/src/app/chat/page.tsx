@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import ResizableSidebar from '@/components/ResizableSidebar';
 import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
@@ -8,7 +9,7 @@ import {
   Search, Pin, MessageCircle, Users, Paperclip, FileText,
   ImageIcon, Info, Send, X, CheckCheck, Plus, Trash2,
   UserPlus, PinOff, Loader2, UserMinus, Sparkles, Download,
-  ShieldCheck, ArrowLeft
+  ShieldCheck, ArrowLeft, UserCircle
 } from 'lucide-react';
 import { UserAvatar } from '@/components/ui/user-avatar';
 import {
@@ -250,19 +251,44 @@ export default function ChatPage() {
   }, [user]);
 
   useEffect(() => {
-    if (user) {
-      loadConversations().then((convs) => {
-        const searchParams = new URLSearchParams(window.location.search);
-        const convId = searchParams.get('conversationId');
-        if (convId && convs.length > 0) {
-          const target = convs.find((c: ConversationType) => c.id === convId);
-          if (target) {
-            setSelectedConv(target);
-            setMobileView('chat');
-          }
+    if (!user) return;
+
+    loadConversations().then(async (convs) => {
+      const searchParams = new URLSearchParams(window.location.search);
+
+      const convId = searchParams.get('conversationId');
+      if (convId && convs.length > 0) {
+        const target = convs.find((c: ConversationType) => c.id === convId);
+        if (target) {
+          setSelectedConv(target);
+          setMobileView('chat');
         }
-      });
-    }
+        return;
+      }
+
+      // ?user=<id> — "Message" from someone's profile. Open the direct chat
+      // with them, creating it if this is the first time. Landing on the
+      // conversation list and making them search for the person again is the
+      // one thing this link exists to avoid.
+      const targetUserId = searchParams.get('user');
+      if (!targetUserId || targetUserId === user._id) return;
+
+      try {
+        const result = await createPrivateConversationAPI(targetUserId);
+        const refreshed = await getConversationsAPI();
+        setConversations(refreshed);
+        const conv = refreshed.find((c: ConversationType) => c.id === result.id);
+        if (conv) {
+          setSelectedConv(conv);
+          setMobileView('chat');
+        }
+      } catch (err) {
+        console.error('Failed to open direct chat:', err);
+      } finally {
+        // Drop the param so a refresh doesn't re-run this.
+        window.history.replaceState({}, '', '/chat');
+      }
+    });
   }, [user, loadConversations]);
 
   // Load messages when conversation is selected
@@ -858,7 +884,14 @@ export default function ChatPage() {
                         </div>
                       ) : (
                         <div className="w-11 h-11 rounded-full overflow-hidden ring-2 ring-white shadow-sm">
-                          <UserAvatar userId={getOtherUser(selectedConv)?.id || selectedConv.id} name={getOtherUser(selectedConv)?.name || selectedConv.name} size={44} />
+                          <UserAvatar
+                            userId={getOtherUser(selectedConv)?.id || selectedConv.id}
+                            name={getOtherUser(selectedConv)?.name || selectedConv.name}
+                            size={44}
+                            // Only a real person has a profile to open — for a
+                            // group this id is the conversation's.
+                            linkToProfile={Boolean(getOtherUser(selectedConv))}
+                          />
                         </div>
                       )}
                       {!selectedConv.isGroup && (() => {
@@ -869,7 +902,19 @@ export default function ChatPage() {
                       })()}
                     </div>
                     <div className="min-w-0">
-                      <h2 className="font-semibold text-[var(--color-text-primary)] truncate">{selectedConv.name}</h2>
+                      {(() => {
+                        const other = !selectedConv.isGroup ? getOtherUser(selectedConv) : null;
+                        return other ? (
+                          <Link
+                            href={`/u/${other.id}`}
+                            className="font-semibold text-[var(--color-text-primary)] truncate block hover:text-[var(--color-blue-primary)] transition-smooth"
+                          >
+                            {selectedConv.name}
+                          </Link>
+                        ) : (
+                          <h2 className="font-semibold text-[var(--color-text-primary)] truncate">{selectedConv.name}</h2>
+                        );
+                      })()}
                       <p className="text-xs text-[var(--color-text-muted)] flex items-center gap-1.5">
                         {selectedConv.isGroup ? (
                           <>
@@ -1133,16 +1178,43 @@ export default function ChatPage() {
                         </div>
                       ) : (
                         <div className="w-24 h-24 mx-auto rounded-full overflow-hidden ring-4 ring-white shadow-premium-md">
-                          <UserAvatar userId={getOtherUser(selectedConv)?.id || selectedConv.id} name={getOtherUser(selectedConv)?.name || selectedConv.name} size={96} />
+                          <UserAvatar
+                            userId={getOtherUser(selectedConv)?.id || selectedConv.id}
+                            name={getOtherUser(selectedConv)?.name || selectedConv.name}
+                            size={96}
+                            linkToProfile={Boolean(getOtherUser(selectedConv))}
+                          />
                         </div>
                       )}
                     </div>
-                    <h2 className="heading-3 mb-1">{selectedConv.name}</h2>
+                    {(() => {
+                      const other = !selectedConv.isGroup ? getOtherUser(selectedConv) : null;
+                      return other ? (
+                        <Link href={`/u/${other.id}`} className="heading-3 mb-1 block hover:text-[var(--color-blue-primary)] transition-smooth">
+                          {selectedConv.name}
+                        </Link>
+                      ) : (
+                        <h2 className="heading-3 mb-1">{selectedConv.name}</h2>
+                      );
+                    })()}
                     <p className="body-sm">
                       {selectedConv.isGroup
                         ? `Group · ${selectedConv.members.length} members`
                         : getOtherUser(selectedConv)?.role || 'User'}
                     </p>
+
+                    {(() => {
+                      const other = !selectedConv.isGroup ? getOtherUser(selectedConv) : null;
+                      return other ? (
+                        <Link
+                          href={`/u/${other.id}`}
+                          className="btn-secondary !py-1.5 !px-3 text-[0.8125rem] inline-flex items-center gap-1.5 mt-3"
+                        >
+                          <UserCircle className="w-3.5 h-3.5" />
+                          View profile
+                        </Link>
+                      ) : null;
+                    })()}
                   </div>
                 </div>
 
@@ -1165,7 +1237,7 @@ export default function ChatPage() {
                         <div key={member.id} className="flex items-center gap-3 p-2 rounded-xl hover:bg-[var(--color-surface-muted)] transition-smooth group">
                           <div className="relative flex-shrink-0">
                             <div className="w-10 h-10 rounded-full overflow-hidden">
-                              <UserAvatar userId={member.id} name={member.name} size={40} />
+                              <UserAvatar userId={member.id} name={member.name} size={40} linkToProfile />
                             </div>
                             {isUserOnline(member.id) && (
                               <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full" />
@@ -1173,7 +1245,10 @@ export default function ChatPage() {
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-medium text-[var(--color-text-primary)] truncate">
-                              {member.name}{member.id === user?._id && <span className="text-[var(--color-text-muted)] font-normal"> (You)</span>}
+                              <Link href={`/u/${member.id}`} className="hover:text-[var(--color-blue-primary)] transition-smooth">
+                                {member.name}
+                              </Link>
+                              {member.id === user?._id && <span className="text-[var(--color-text-muted)] font-normal"> (You)</span>}
                             </div>
                             <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                               <span className={`text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ${getRoleColor(member.role)}`}>

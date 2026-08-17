@@ -1,8 +1,10 @@
+import crypto from 'crypto'
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
 import { OAuth2Client } from 'google-auth-library'
 import prisma from '../config/prisma.js'
-import { hasMailConfig, sendWelcomeEmail, sendPasswordResetEmail, sendTestEmail, sendContactEmail } from '../utils/mailer.js'
+import { hasMailConfig, sendWelcomeEmail, sendPasswordResetEmail, sendEmailChangeEmail, sendTestEmail, sendContactEmail } from '../utils/mailer.js'
+import { persistFile, removeUploadedFile } from '../utils/storage.js'
 
 const PASSWORD_POLICY = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/
 
@@ -31,8 +33,506 @@ const authResponse = (user, rememberMe) => ({
   name: user.name,
   email: user.email,
   role: user.role,
+  avatarUrl: user.avatarUrl ?? null,
   token: generateToken(user.id, rememberMe),
 })
+
+// ── Profile ───────────────────────────────────────────────────────────
+
+// The fields the owner sees on their own account.
+const OWN_PROFILE_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  role: true,
+  createdAt: true,
+  avatarUrl: true,
+  headline: true,
+  bio: true,
+  careerStage: true,
+  institution: true,
+  specialty: true,
+  qualification: true,
+  designation: true,
+  yearsExperience: true,
+  studyYear: true,
+  graduationYear: true,
+  city: true,
+  country: true,
+  websiteUrl: true,
+  linkedinUrl: true,
+  twitterUrl: true,
+  isProfilePublic: true,
+  showEmail: true,
+  pendingEmail: true,
+}
+
+// What every other feature needs to render a person: never more than this.
+export const PUBLIC_USER_SELECT = { id: true, name: true, avatarUrl: true }
+
+const CAREER_STAGES = new Set(['student', 'doctor', 'professor', 'researcher', 'other'])
+
+// Fields the form only asks certain professions for. Clearing them when the
+// profession changes is what stops a doctor's profile from still advertising
+// the "third year" they filled in while they were a student.
+const STAGE_FIELDS = {
+  student: ['institution', 'qualification', 'studyYear', 'graduationYear'],
+  doctor: ['institution', 'qualification', 'specialty', 'designation', 'yearsExperience'],
+  professor: ['institution', 'qualification', 'specialty', 'designation', 'yearsExperience'],
+  researcher: ['institution', 'qualification', 'specialty', 'designation', 'yearsExperience'],
+  other: ['institution', 'designation'],
+}
+
+const ALL_STAGE_FIELDS = ['institution', 'specialty', 'qualification', 'designation', 'yearsExperience', 'studyYear', 'graduationYear']
+
+// Avatars set through the profile form are always presets from the frontend
+// catalog. Uploaded photos get their URL from persistFile, never from the
+// client, so an arbitrary remote URL can't be smuggled in here.
+const PRESET_AVATAR_PATTERN = /^preset:[a-z0-9-]{1,40}$/
+
+const trimOrNull = (value, max) => {
+  if (value === null || value === undefined) return null
+  const text = String(value).trim()
+  if (!text) return null
+  return text.slice(0, max)
+}
+
+// Accepts "medzae.com" as readily as "https://medzae.com" — people rarely type
+// the scheme. Anything that isn't http(s) after normalising is rejected.
+const normalizeUrl = (value) => {
+  const text = trimOrNull(value, 200)
+  if (!text) return null
+  const withScheme = /^https?:\/\//i.test(text) ? text : `https://${text}`
+  try {
+    const url = new URL(withScheme)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+    return url.toString()
+  } catch {
+    return null
+  }
+}
+
+// @desc    Update the signed-in user's profile
+// @route   PATCH /api/users/me
+export const updateProfile = async (req, res) => {
+  try {
+    const body = req.body || {}
+    const data = {}
+
+    if (body.name !== undefined) {
+      const name = trimOrNull(body.name, 80)
+      if (!name) return res.status(400).json({ message: 'Name cannot be empty' })
+      data.name = name
+    }
+
+    if (body.headline !== undefined) data.headline = trimOrNull(body.headline, 120)
+    if (body.bio !== undefined) data.bio = trimOrNull(body.bio, 600)
+    if (body.institution !== undefined) data.institution = trimOrNull(body.institution, 120)
+    if (body.specialty !== undefined) data.specialty = trimOrNull(body.specialty, 120)
+    if (body.qualification !== undefined) data.qualification = trimOrNull(body.qualification, 120)
+    if (body.designation !== undefined) data.designation = trimOrNull(body.designation, 120)
+    if (body.studyYear !== undefined) data.studyYear = trimOrNull(body.studyYear, 40)
+    if (body.city !== undefined) data.city = trimOrNull(body.city, 80)
+    if (body.country !== undefined) data.country = trimOrNull(body.country, 80)
+
+    if (body.careerStage !== undefined) {
+      const stage = trimOrNull(body.careerStage, 40)
+      if (stage && !CAREER_STAGES.has(stage)) {
+        return res.status(400).json({ message: 'Unknown profession' })
+      }
+      data.careerStage = stage
+    }
+
+    if (body.graduationYear !== undefined) {
+      const raw = body.graduationYear
+      if (raw === null || raw === '') {
+        data.graduationYear = null
+      } else {
+        const year = Number(raw)
+        const maxYear = new Date().getFullYear() + 15
+        if (!Number.isInteger(year) || year < 1950 || year > maxYear) {
+          return res.status(400).json({ message: `Graduation year must be between 1950 and ${maxYear}` })
+        }
+        data.graduationYear = year
+      }
+    }
+
+    if (body.yearsExperience !== undefined) {
+      const raw = body.yearsExperience
+      if (raw === null || raw === '') {
+        data.yearsExperience = null
+      } else {
+        const years = Number(raw)
+        if (!Number.isInteger(years) || years < 0 || years > 80) {
+          return res.status(400).json({ message: 'Years of experience must be between 0 and 80' })
+        }
+        data.yearsExperience = years
+      }
+    }
+
+    // Switching profession drops whatever the previous one asked for and this
+    // one doesn't, so nothing lingers invisibly on the public profile.
+    if (data.careerStage !== undefined) {
+      const kept = new Set(STAGE_FIELDS[data.careerStage] || [])
+      for (const field of ALL_STAGE_FIELDS) {
+        if (!kept.has(field)) data[field] = null
+      }
+    }
+
+    for (const field of ['websiteUrl', 'linkedinUrl', 'twitterUrl']) {
+      if (body[field] === undefined) continue
+      const raw = trimOrNull(body[field], 200)
+      if (!raw) {
+        data[field] = null
+        continue
+      }
+      const normalized = normalizeUrl(raw)
+      if (!normalized) return res.status(400).json({ message: 'Please enter a valid link (for example https://example.com)' })
+      data[field] = normalized
+    }
+
+    if (body.isProfilePublic !== undefined) data.isProfilePublic = Boolean(body.isProfilePublic)
+    if (body.showEmail !== undefined) data.showEmail = Boolean(body.showEmail)
+
+    // avatar: "preset:<id>" picks from the catalog, null clears back to initials.
+    if (body.avatarUrl !== undefined) {
+      const avatar = trimOrNull(body.avatarUrl, 60)
+      if (avatar && !PRESET_AVATAR_PATTERN.test(avatar)) {
+        return res.status(400).json({ message: 'Choose an avatar from the gallery, or upload a photo' })
+      }
+      data.avatarUrl = avatar
+    }
+
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ message: 'Nothing to update' })
+    }
+
+    const user = await prisma.user.update({
+      where: { id: req.user.id },
+      data,
+      select: OWN_PROFILE_SELECT,
+    })
+
+    res.json({ ...user, _id: user.id })
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+// @desc    Upload a profile photo
+// @route   POST /api/users/me/avatar   (multipart, field name "avatar")
+export const uploadAvatar = async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'No image was uploaded' })
+
+    if (!req.file.mimetype?.startsWith('image/')) {
+      return res.status(400).json({ message: 'Profile photos must be an image file' })
+    }
+
+    const previous = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { avatarUrl: true },
+    })
+
+    const avatarUrl = await persistFile(req.file, { folder: 'medihub/avatars', prefix: 'avatar' })
+
+    const user = await prisma.user.update({
+      where: { id: req.user.id },
+      data: { avatarUrl },
+      select: OWN_PROFILE_SELECT,
+    })
+
+    // Replacing a photo orphans the old file. This is a no-op for presets and
+    // for Cloudinary URLs; it only sweeps the local dev uploads directory.
+    if (previous?.avatarUrl && !previous.avatarUrl.startsWith('preset:')) {
+      removeUploadedFile(previous.avatarUrl)
+    }
+
+    res.json({ ...user, _id: user.id })
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+// @desc    Change (or, for Google-only accounts, set) the account password
+// @route   PUT /api/users/me/password
+export const changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {}
+
+    if (!newPassword) return res.status(400).json({ message: 'A new password is required' })
+
+    if (!isStrongPassword(newPassword)) {
+      return res.status(400).json({
+        message: 'Password must be at least 8 characters and include uppercase, lowercase, number, and special character',
+      })
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } })
+    if (!user) return res.status(404).json({ message: 'User not found' })
+
+    // Accounts created through Google have no password yet — there is nothing
+    // to verify, so this call sets the first one instead of changing it.
+    if (user.password) {
+      if (!currentPassword) return res.status(400).json({ message: 'Your current password is required' })
+      const isMatch = await bcrypt.compare(currentPassword, user.password)
+      if (!isMatch) return res.status(401).json({ message: 'Current password is incorrect' })
+
+      if (currentPassword === newPassword) {
+        return res.status(400).json({ message: 'Your new password must be different from the current one' })
+      }
+    }
+
+    const salt = await bcrypt.genSalt(10)
+    const hashedPassword = await bcrypt.hash(newPassword, salt)
+
+    await prisma.user.update({ where: { id: user.id }, data: { password: hashedPassword } })
+
+    // Reset links are signed with the old password hash, so any outstanding
+    // "forgot password" email stops working the moment this succeeds.
+    res.json({ message: user.password ? 'Password updated' : 'Password set — you can now sign in with email too' })
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+// @desc    Start an email change — confirmation goes to the NEW address
+// @route   POST /api/users/me/email
+const EMAIL_CHANGE_TTL_MS = 60 * 60 * 1000
+
+export const requestEmailChange = async (req, res) => {
+  try {
+    const { newEmail, currentPassword } = req.body || {}
+    const normalizedEmail = normalizeEmail(newEmail || '')
+
+    if (!normalizedEmail) return res.status(400).json({ message: 'A new email address is required' })
+    if (!EMAIL_PATTERN.test(normalizedEmail)) {
+      return res.status(400).json({ message: 'Please enter a valid email address' })
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } })
+    if (!user) return res.status(404).json({ message: 'User not found' })
+
+    if (normalizedEmail === user.email) {
+      return res.status(400).json({ message: 'That is already your email address' })
+    }
+
+    // Password-holders re-authenticate: a hijacked session shouldn't be able to
+    // move the account to an attacker's inbox.
+    if (user.password) {
+      if (!currentPassword) return res.status(400).json({ message: 'Your current password is required' })
+      const isMatch = await bcrypt.compare(currentPassword, user.password)
+      if (!isMatch) return res.status(401).json({ message: 'Current password is incorrect' })
+    }
+
+    const taken = await prisma.user.findUnique({ where: { email: normalizedEmail } })
+    if (taken) return res.status(400).json({ message: 'That email address is already in use' })
+
+    if (!hasMailConfig()) {
+      return res.status(503).json({
+        message: 'Email service is not configured, so the address cannot be verified right now.',
+      })
+    }
+
+    const token = crypto.randomBytes(32).toString('hex')
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        pendingEmail: normalizedEmail,
+        emailChangeToken: token,
+        emailChangeExpires: new Date(Date.now() + EMAIL_CHANGE_TTL_MS),
+      },
+    })
+
+    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '')
+    const confirmUrl = `${frontendUrl}/confirm-email?token=${token}`
+
+    try {
+      await sendEmailChangeEmail({ name: user.name, newEmail: normalizedEmail, confirmUrl })
+    } catch (mailError) {
+      // Roll the pending change back so the UI doesn't claim a mail is coming.
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { pendingEmail: null, emailChangeToken: null, emailChangeExpires: null },
+      })
+      console.error('Email change mail failed:', mailError.message)
+      return res.status(502).json({ message: formatSmtpError(mailError) })
+    }
+
+    res.json({ message: `Confirmation sent to ${normalizedEmail}. Your current email keeps working until you confirm.` })
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+// @desc    Cancel a pending email change
+// @route   DELETE /api/users/me/email
+export const cancelEmailChange = async (req, res) => {
+  try {
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: { pendingEmail: null, emailChangeToken: null, emailChangeExpires: null },
+    })
+    res.json({ message: 'Email change cancelled' })
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+// @desc    Confirm an email change from the emailed link
+// @route   POST /api/users/confirm-email      (public — the link may open in
+//          a browser where nobody is signed in)
+export const confirmEmailChange = async (req, res) => {
+  try {
+    const token = (req.body?.token || '').trim()
+    if (!token) return res.status(400).json({ message: 'Confirmation token is required' })
+
+    const user = await prisma.user.findUnique({ where: { emailChangeToken: token } })
+
+    if (!user || !user.pendingEmail || !user.emailChangeExpires || user.emailChangeExpires < new Date()) {
+      return res.status(400).json({ message: 'This confirmation link is invalid or has expired' })
+    }
+
+    // Someone else may have claimed the address while this link sat unopened.
+    const taken = await prisma.user.findUnique({ where: { email: user.pendingEmail } })
+    if (taken && taken.id !== user.id) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { pendingEmail: null, emailChangeToken: null, emailChangeExpires: null },
+      })
+      return res.status(400).json({ message: 'That email address is now in use by another account' })
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        email: user.pendingEmail,
+        pendingEmail: null,
+        emailChangeToken: null,
+        emailChangeExpires: null,
+      },
+    })
+
+    res.json({ message: 'Email address updated', email: updated.email })
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
+
+// @desc    Permanently delete the signed-in user's account and their content
+// @route   DELETE /api/users/me
+export const deleteAccount = async (req, res) => {
+  try {
+    const { password, confirmText } = req.body || {}
+
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } })
+    if (!user) return res.status(404).json({ message: 'User not found' })
+
+    if (user.password) {
+      if (!password) return res.status(400).json({ message: 'Your password is required to delete the account' })
+      const isMatch = await bcrypt.compare(password, user.password)
+      if (!isMatch) return res.status(401).json({ message: 'Password is incorrect' })
+    } else {
+      // Google-only accounts have no password to check, so ask them to type
+      // their email as the deliberate action.
+      if (normalizeEmail(confirmText || '') !== user.email) {
+        return res.status(400).json({ message: 'Type your email address exactly to confirm deletion' })
+      }
+    }
+
+    const userId = user.id
+
+    // Communities this user created would take every member's threads with
+    // them, so hand each one to the longest-standing remaining member first.
+    // Only a community nobody else is in gets deleted.
+    const createdCommunities = await prisma.community.findMany({
+      where: { creatorId: userId },
+      select: { id: true },
+    })
+
+    for (const community of createdCommunities) {
+      const successor = await prisma.communityMember.findFirst({
+        where: { communityId: community.id, userId: { not: userId } },
+        orderBy: [{ role: 'asc' }, { joinedAt: 'asc' }],
+        select: { userId: true },
+      })
+
+      if (successor) {
+        await prisma.community.update({
+          where: { id: community.id },
+          data: { creatorId: successor.userId },
+        })
+        await prisma.communityMember.updateMany({
+          where: { communityId: community.id, userId: successor.userId },
+          data: { role: 'creator' },
+        })
+      } else {
+        await prisma.community.delete({ where: { id: community.id } })
+      }
+    }
+
+    // Relations that don't cascade have to go first, innermost outward.
+    await prisma.$transaction([
+      prisma.threadReply.deleteMany({ where: { authorId: userId } }),
+      prisma.thread.deleteMany({ where: { authorId: userId } }),
+      prisma.comment.deleteMany({ where: { authorId: userId } }),
+      prisma.post.deleteMany({ where: { authorId: userId } }),
+      prisma.chatMessage.deleteMany({ where: { senderId: userId } }),
+      prisma.groupJoinRequest.deleteMany({ where: { userId } }),
+      prisma.note.deleteMany({ where: { userId } }),
+      prisma.task.deleteMany({ where: { userId } }),
+      prisma.document.deleteMany({ where: { userId } }),
+      prisma.user.delete({ where: { id: userId } }),
+    ])
+
+    res.json({ message: 'Your account and its content have been deleted' })
+  } catch (error) {
+    console.error('Account deletion failed:', error.message)
+    res.status(500).json({ message: 'We could not delete the account. Please try again, or contact support.' })
+  }
+}
+
+// @desc    View another user's profile — only what they chose to publish
+// @route   GET /api/users/:id/profile
+export const getUserProfile = async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.params.id },
+      select: OWN_PROFILE_SELECT,
+    })
+
+    if (!user) return res.status(404).json({ message: 'User not found' })
+
+    // The owner always sees their own profile in full.
+    if (user.id === req.user.id) {
+      return res.json({ ...user, _id: user.id, isOwnProfile: true })
+    }
+
+    if (!user.isProfilePublic) {
+      // Name and avatar are already visible anywhere this person has posted,
+      // so a private profile hides the details rather than the person.
+      return res.json({
+        _id: user.id,
+        id: user.id,
+        name: user.name,
+        avatarUrl: user.avatarUrl,
+        isPrivate: true,
+      })
+    }
+
+    const { pendingEmail, showEmail, email, ...visible } = user
+
+    res.json({
+      ...visible,
+      _id: user.id,
+      email: showEmail ? email : null,
+      isPrivate: false,
+    })
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+}
 
 const formatSmtpError = (error) => {
   const message = error?.message || 'Unknown SMTP failure'
@@ -85,13 +585,7 @@ export const registerUser = async (req, res) => {
       console.error('Welcome email failed:', mailError.message)
     })
 
-    res.status(201).json({
-      _id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      token: generateToken(user.id, rememberMe),
-    })
+    res.status(201).json(authResponse(user, rememberMe))
   } catch (error) {
     res.status(500).json({ message: error.message })
   }
@@ -120,13 +614,7 @@ export const loginUser = async (req, res) => {
       return res.status(401).json({ message: 'Invalid email or password' })
     }
 
-    res.json({
-      _id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      token: generateToken(user.id, rememberMe),
-    })
+    res.json(authResponse(user, rememberMe))
   } catch (error) {
     res.status(500).json({ message: error.message })
   }
@@ -357,10 +845,14 @@ export const getMe = async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user.id },
-      select: { id: true, name: true, email: true, role: true, createdAt: true },
+      select: { ...OWN_PROFILE_SELECT, password: true },
     })
     if (!user) return res.status(404).json({ message: 'User not found' })
-    res.json({ ...user, _id: user.id })
+
+    // The profile page needs to know whether to offer "change password" or
+    // "set a password" — never the hash itself.
+    const { password, ...profile } = user
+    res.json({ ...profile, _id: user.id, hasPassword: Boolean(password) })
   } catch (error) {
     res.status(500).json({ message: error.message })
   }
@@ -371,7 +863,7 @@ export const getMe = async (req, res) => {
 export const getUsers = async (req, res) => {
   try {
     const users = await prisma.user.findMany({
-      select: { id: true, name: true, email: true, role: true, createdAt: true },
+      select: { id: true, name: true, email: true, role: true, createdAt: true, avatarUrl: true },
     })
     res.json(users.map(u => ({ ...u, _id: u.id })))
   } catch (error) {

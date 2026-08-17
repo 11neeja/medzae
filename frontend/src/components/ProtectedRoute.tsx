@@ -11,7 +11,9 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
   const pathname = usePathname();
 
   // Public routes that don't require authentication
-  const publicRoutes = ['/', '/login', '/signup', '/forgot-password', '/reset-password'];
+  // '/confirm-email' is public because the link is opened from an inbox, which
+  // is often a browser where nobody is signed in.
+  const publicRoutes = ['/', '/login', '/signup', '/forgot-password', '/reset-password', '/confirm-email'];
   const isPublicRoute = publicRoutes.includes(pathname);
 
   useEffect(() => {

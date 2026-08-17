@@ -78,6 +78,22 @@ export const buildContactEmail = ({ name, email, message }) => shell({
   `,
 })
 
+// Sent to the NEW address when someone changes their sign-in email. The old
+// address keeps working until this link is clicked, so a typo locks nobody out.
+export const buildEmailChangeEmail = ({ name, confirmUrl, newEmail }) => shell({
+  title: 'Confirm Your New Email',
+  subtitle: 'Confirm this address to finish changing the email you sign in with.',
+  body: `
+    <p style="margin:0 0 18px;font-size:16px;line-height:1.8;">Hi ${name},</p>
+    <p style="margin:0 0 18px;font-size:15px;line-height:1.8;">You asked to change your Medzae sign-in email to <strong>${newEmail}</strong>. Confirm below and this becomes the address you log in with.</p>
+    <div style="background:${theme.softBlue};border:1px solid ${theme.border};border-radius:18px;padding:18px 20px;margin:24px 0;">
+      <p style="margin:0;font-size:14px;line-height:1.7;color:${theme.text};">Your current email keeps working until you confirm. The link expires in 1 hour. If you did not request this, ignore this message — nothing changes.</p>
+    </div>
+    <a href="${confirmUrl}" style="display:inline-block;background:${theme.navy};color:#fff;text-decoration:none;padding:14px 24px;border-radius:14px;font-weight:700;margin-top:6px;">Confirm Email Address</a>
+    <p style="margin:20px 0 0;font-size:12px;line-height:1.7;color:${theme.muted};word-break:break-all;">If the button does not work, copy and paste this link into your browser:<br>${confirmUrl}</p>
+  `,
+})
+
 export const buildPasswordResetEmail = ({ name, resetUrl }) => shell({
   title: 'Reset Your Password',
   subtitle: 'We received a request to reset your Medzae password. This link expires in 1 hour.',

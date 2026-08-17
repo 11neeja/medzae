@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import ResizableSidebar from '@/components/ResizableSidebar';
 import {
@@ -55,6 +56,7 @@ interface Author {
   name: string;
   email: string;
   role?: string;
+  avatarUrl?: string | null;
 }
 
 interface Comment {
@@ -115,6 +117,7 @@ export default function FeedPage() {
 
   const currentUserId = user?._id || '';
   const currentUserName = user?.name || 'You';
+  const currentUserAvatar = user?.avatarUrl ?? null;
   const currentUserHandle = `@${currentUserName.toLowerCase().replace(/\s+/g, '')}`;
 
   useEffect(() => {
@@ -382,14 +385,19 @@ export default function FeedPage() {
             <UserAvatar
               userId={post.repostedFrom ? post.repostedFrom.author._id : post.author._id}
               name={post.repostedFrom ? post.repostedFrom.author.name : post.author.name}
+              avatarUrl={post.repostedFrom ? post.repostedFrom.author.avatarUrl : post.author.avatarUrl}
               size={44}
+              linkToProfile
               className="ring-1 ring-[var(--color-border-hairline)]"
             />
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-semibold text-[0.9375rem] tracking-tight text-[var(--color-navy)]">
+                <Link
+                  href={`/u/${post.repostedFrom ? post.repostedFrom.author._id : post.author._id}`}
+                  className="font-semibold text-[0.9375rem] tracking-tight text-[var(--color-navy)] hover:text-[var(--color-blue-primary)] transition-smooth"
+                >
                   {post.repostedFrom ? post.repostedFrom.author.name : post.author.name}
-                </span>
+                </Link>
                 {roleBadge(post.repostedFrom ? post.repostedFrom.author.role : post.author.role)}
               </div>
               <div className="flex items-center gap-2 mt-1">
@@ -567,11 +575,11 @@ export default function FeedPage() {
                 ) : (
                   post.comments.map(comment => (
                     <div key={comment._id} className="flex gap-2.5 group">
-                      <UserAvatar userId={comment.author._id} name={comment.author.name} size={30} className="mt-0.5" />
+                      <UserAvatar userId={comment.author._id} name={comment.author.name} avatarUrl={comment.author.avatarUrl} size={30} linkToProfile className="mt-0.5" />
                       <div className="flex-1 card-item px-3.5 py-2.5">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
-                            <span className="font-semibold text-[0.8125rem] text-[var(--color-navy)] tracking-tight">{comment.author.name}</span>
+                            <Link href={`/u/${comment.author._id}`} className="font-semibold text-[0.8125rem] text-[var(--color-navy)] tracking-tight hover:text-[var(--color-blue-primary)] transition-smooth">{comment.author.name}</Link>
                             <span className="text-[10px] uppercase tracking-[0.14em] font-semibold text-[var(--color-text-soft)]">{getTimeAgo(comment.createdAt)}</span>
                           </div>
                           {comment.author._id === currentUserId && (
@@ -592,7 +600,7 @@ export default function FeedPage() {
               </div>
               {/* Comment input */}
               <div className="flex gap-2.5 items-center">
-                <UserAvatar userId={currentUserId} name={currentUserName} size={30} />
+                <UserAvatar userId={currentUserId} name={currentUserName} avatarUrl={currentUserAvatar} size={30} />
                 <div className="flex-1 flex gap-2">
                   <input
                     type="text"
@@ -649,7 +657,7 @@ export default function FeedPage() {
               <div className="card p-7 lg:sticky lg:top-24">
                 <div className="text-center mb-6 pb-6 border-b border-[var(--color-border-hairline)]">
                   <div className="mx-auto mb-4 w-fit hover-scale transition-transform">
-                    <UserAvatar userId={currentUserId} name={currentUserName} size={84} />
+                    <UserAvatar userId={currentUserId} name={currentUserName} avatarUrl={currentUserAvatar} size={84} />
                   </div>
                   <h2
                     className="text-[var(--color-navy)] mb-1"
@@ -703,7 +711,7 @@ export default function FeedPage() {
             {/* Post Composer */}
             <div className="card p-6 mb-6 fade-in-up">
               <div className="flex gap-4">
-                <UserAvatar userId={currentUserId} name={currentUserName} size={44} className="ring-1 ring-[var(--color-border-hairline)]" />
+                <UserAvatar userId={currentUserId} name={currentUserName} avatarUrl={currentUserAvatar} size={44} className="ring-1 ring-[var(--color-border-hairline)]" />
                 <div className="flex-1 min-w-0">
                   <textarea
                     value={newPostContent}
@@ -956,7 +964,7 @@ export default function FeedPage() {
                             className="w-full text-left hover:bg-[var(--color-accent-soft)] px-2 py-2.5 rounded-md transition-smooth group"
                           >
                             <div className="flex items-start gap-2.5">
-                              <UserAvatar userId={p.author._id} name={p.author.name} size={28} className="mt-0.5" />
+                              <UserAvatar userId={p.author._id} name={p.author.name} avatarUrl={p.author.avatarUrl} size={28} className="mt-0.5" />
                               <div className="flex-1 min-w-0">
                                 <div className="text-xs font-semibold text-[var(--color-navy)] tracking-tight truncate">{p.author.name}</div>
                                 <p className="text-xs text-[var(--color-text-muted)] line-clamp-2 mt-0.5 leading-relaxed">{p.content || '(Repost)'}</p>

@@ -14,6 +14,7 @@ import { AppProvider } from '@/context/AppContext'
 import { AuthProvider } from '@/context/AuthContext'
 import { NotificationProvider } from '@/context/NotificationContext'
 import { OpportunityProvider } from '@/context/OpportunityContext'
+import { UserDirectoryProvider } from '@/context/UserDirectoryContext'
 import Navbar from '@/components/Navbar'
 import ProtectedRoute from '@/components/ProtectedRoute'
 
@@ -123,16 +124,18 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{ __html: jsonLd(SITE_GRAPH) }}
         />
         <AuthProvider>
-          <NotificationProvider>
-            <AppProvider>
-              <OpportunityProvider>
-                <Navbar />
-                <ProtectedRoute>
-                  <main>{children}</main>
-                </ProtectedRoute>
-              </OpportunityProvider>
-            </AppProvider>
-          </NotificationProvider>
+          <UserDirectoryProvider>
+            <NotificationProvider>
+              <AppProvider>
+                <OpportunityProvider>
+                  <Navbar />
+                  <ProtectedRoute>
+                    <main>{children}</main>
+                  </ProtectedRoute>
+                </OpportunityProvider>
+              </AppProvider>
+            </NotificationProvider>
+          </UserDirectoryProvider>
         </AuthProvider>
       </body>
     </html>

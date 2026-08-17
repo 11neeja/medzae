@@ -687,7 +687,7 @@ export default function GroupsPage() {
               ) : (
                 replies.map(reply => (
                   <div key={reply.id} className="flex gap-3">
-                    <UserAvatar userId={reply.authorId} name={reply.authorName} size={32} className="mt-1 ring-1 ring-[var(--color-border-hairline)]" />
+                    <UserAvatar userId={reply.authorId} name={reply.authorName} size={32} linkToProfile className="mt-1 ring-1 ring-[var(--color-border-hairline)]" />
                     <div className="flex-1 min-w-0 card-item px-4 py-3">
                       <div className="flex flex-wrap items-center gap-2 mb-1.5">
                         <span className="font-semibold text-[0.8125rem] text-[var(--color-navy)] tracking-tight">{reply.authorName}</span>
@@ -1164,7 +1164,7 @@ export default function GroupsPage() {
                 {members.map(m => (
                   <div key={m.id} className="card-item flex items-center justify-between px-3 py-2.5 group">
                     <div className="flex items-center gap-3 min-w-0">
-                      <UserAvatar userId={m.id} name={m.name} size={32} className="ring-1 ring-[var(--color-border-hairline)]" />
+                      <UserAvatar userId={m.id} name={m.name} size={32} linkToProfile className="ring-1 ring-[var(--color-border-hairline)]" />
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-semibold text-[var(--color-text-primary)] tracking-tight truncate">{m.name}</span>

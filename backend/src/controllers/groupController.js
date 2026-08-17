@@ -8,9 +8,9 @@ export const resourceUpload = createMemoryUpload(50 * 1024 * 1024);
 
 // Shared include for communities
 const communityInclude = {
-  members: { include: { user: { select: { id: true, name: true, email: true, role: true } } } },
+  members: { include: { user: { select: { id: true, name: true, email: true, role: true, avatarUrl: true } } } },
   _count: { select: { members: true, threads: true } },
-  creator: { select: { id: true, name: true } },
+  creator: { select: { id: true, name: true, avatarUrl: true } },
 };
 
 // ── Communities ──────────────────────────────────────────
@@ -178,7 +178,7 @@ export const getMembers = async (req, res) => {
   try {
     const members = await prisma.communityMember.findMany({
       where: { communityId: req.params.id },
-      include: { user: { select: { id: true, name: true, email: true, role: true } } },
+      include: { user: { select: { id: true, name: true, email: true, role: true, avatarUrl: true } } },
       orderBy: { joinedAt: 'asc' },
     });
     res.json(members.map(m => ({ id: m.user.id, name: m.user.name, email: m.user.email, role: m.user.role, memberRole: m.role, joinedAt: m.joinedAt })));
@@ -265,7 +265,7 @@ export const getThreads = async (req, res) => {
     const threads = await prisma.thread.findMany({
       where: { communityId: id },
       include: {
-        author: { select: { id: true, name: true, role: true } },
+        author: { select: { id: true, name: true, role: true, avatarUrl: true } },
         _count: { select: { replies: true, votes: true } },
         votes: { select: { userId: true, value: true } },
       },
@@ -333,7 +333,7 @@ export const createThread = async (req, res) => {
         authorId: req.user.id,
       },
       include: {
-        author: { select: { id: true, name: true, role: true } },
+        author: { select: { id: true, name: true, role: true, avatarUrl: true } },
         _count: { select: { replies: true, votes: true } },
       },
     });
@@ -425,7 +425,7 @@ export const getReplies = async (req, res) => {
   try {
     const replies = await prisma.threadReply.findMany({
       where: { threadId: req.params.threadId },
-      include: { author: { select: { id: true, name: true, role: true } } },
+      include: { author: { select: { id: true, name: true, role: true, avatarUrl: true } } },
       orderBy: { createdAt: 'asc' },
     });
     res.json(replies.map(r => ({
@@ -460,7 +460,7 @@ export const createReply = async (req, res) => {
 
     const reply = await prisma.threadReply.create({
       data: { content, threadId, authorId: req.user.id },
-      include: { author: { select: { id: true, name: true, role: true } } },
+      include: { author: { select: { id: true, name: true, role: true, avatarUrl: true } } },
     });
 
     // Notify thread author about the reply

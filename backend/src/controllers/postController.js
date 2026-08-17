@@ -5,17 +5,17 @@ import { persistFile } from '../utils/storage.js'
 export const postImageUpload = createMemoryUpload(10 * 1024 * 1024) // 10 MB max
 
 const postInclude = {
-  author: { select: { id: true, name: true, email: true, role: true } },
-  likes: { select: { id: true, name: true } },
+  author: { select: { id: true, name: true, email: true, role: true, avatarUrl: true } },
+  likes: { select: { id: true, name: true, avatarUrl: true } },
   bookmarkedBy: { select: { id: true } },
   comments: {
-    include: { author: { select: { id: true, name: true, email: true, role: true } } },
+    include: { author: { select: { id: true, name: true, email: true, role: true, avatarUrl: true } } },
     orderBy: { createdAt: 'asc' },
   },
   repostedFrom: {
     include: {
-      author: { select: { id: true, name: true, email: true, role: true } },
-      likes: { select: { id: true, name: true } },
+      author: { select: { id: true, name: true, email: true, role: true, avatarUrl: true } },
+      likes: { select: { id: true, name: true, avatarUrl: true } },
       comments: { select: { id: true } },
       _count: { select: { reposts: true } },
     },

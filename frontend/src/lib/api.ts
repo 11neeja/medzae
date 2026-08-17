@@ -9,6 +9,20 @@ export const api = axios.create({
   },
 })
 
+/**
+ * Resolve a stored file path into something the browser can fetch.
+ *
+ * Uploads are served by the API host, not the web app. In production
+ * persistFile returns an absolute Cloudinary URL and this is a no-op, but the
+ * local-disk fallback returns "/uploads/..." — which the browser would
+ * otherwise resolve against the frontend origin and 404.
+ */
+export const assetUrl = (path: string): string => {
+  if (!path || /^https?:\/\//i.test(path)) return path
+  const origin = API_URL.replace(/\/api\/?$/, '')
+  return `${origin}${path.startsWith('/') ? '' : '/'}${path}`
+}
+
 // Request interceptor for adding auth token.
 // Sessions without "remember me" store the token in sessionStorage, so check both.
 api.interceptors.request.use(
@@ -67,6 +81,79 @@ export const getMeAPI = async () => {
 
 export const sendContactMessageAPI = async (data: { name: string; email: string; message: string }) => {
   const res = await api.post('/users/contact', data)
+  return res.data
+}
+
+// ─── Profile API ────────────────────────────────────────────────────
+export interface ProfileUpdate {
+  name?: string
+  headline?: string | null
+  bio?: string | null
+  careerStage?: string | null
+  institution?: string | null
+  specialty?: string | null
+  qualification?: string | null
+  designation?: string | null
+  yearsExperience?: number | null
+  studyYear?: string | null
+  graduationYear?: number | null
+  city?: string | null
+  country?: string | null
+  websiteUrl?: string | null
+  linkedinUrl?: string | null
+  twitterUrl?: string | null
+  isProfilePublic?: boolean
+  showEmail?: boolean
+  /** `preset:<id>` from the avatar catalog, or null to clear back to initials */
+  avatarUrl?: string | null
+}
+
+export const getUsersAPI = async () => {
+  const res = await api.get('/users')
+  return res.data
+}
+
+export const updateProfileAPI = async (data: ProfileUpdate) => {
+  const res = await api.patch('/users/me', data)
+  return res.data
+}
+
+export const uploadAvatarAPI = async (file: File) => {
+  const formData = new FormData()
+  formData.append('avatar', file)
+  const res = await api.post('/users/me/avatar', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return res.data
+}
+
+export const changePasswordAPI = async (currentPassword: string, newPassword: string) => {
+  const res = await api.put('/users/me/password', { currentPassword, newPassword })
+  return res.data
+}
+
+export const requestEmailChangeAPI = async (newEmail: string, currentPassword?: string) => {
+  const res = await api.post('/users/me/email', { newEmail, currentPassword })
+  return res.data
+}
+
+export const cancelEmailChangeAPI = async () => {
+  const res = await api.delete('/users/me/email')
+  return res.data
+}
+
+export const confirmEmailChangeAPI = async (token: string) => {
+  const res = await api.post('/users/confirm-email', { token })
+  return res.data
+}
+
+export const deleteAccountAPI = async (payload: { password?: string; confirmText?: string }) => {
+  const res = await api.delete('/users/me', { data: payload })
+  return res.data
+}
+
+export const getUserProfileAPI = async (userId: string) => {
+  const res = await api.get(`/users/${userId}/profile`)
   return res.data
 }
 

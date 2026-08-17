@@ -50,7 +50,7 @@ io.use(async (socket, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET)
     const user = await prisma.user.findUnique({
       where: { id: decoded.id },
-      select: { id: true, name: true, email: true, role: true },
+      select: { id: true, name: true, email: true, role: true, avatarUrl: true },
     })
     if (!user) return next(new Error('User not found'))
     socket.user = user
