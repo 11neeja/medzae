@@ -513,7 +513,11 @@ export default function ProfilePage() {
               checked={Boolean(profile.isProfilePublic)}
               onChange={(checked) =>
                 handleVisibilityChange(
-                  { isProfilePublic: checked },
+                  // Going private clears the email switch as well. Leaving it
+                  // set would show an ON toggle nobody can reach, and would
+                  // quietly re-expose the address the next time the profile
+                  // went public.
+                  checked ? { isProfilePublic: true } : { isProfilePublic: false, showEmail: false },
                   checked ? 'Your profile is now public.' : 'Your profile is now private.',
                 )
               }
@@ -523,9 +527,11 @@ export default function ProfilePage() {
               icon={profile.showEmail ? Eye : EyeOff}
               title="Show my email on my profile"
               description={
-                profile.isProfilePublic
-                  ? 'Your email address is listed on your public profile.'
-                  : 'Takes effect once your profile is public.'
+                !profile.isProfilePublic
+                  ? 'Turn on your public profile first to share your email.'
+                  : profile.showEmail
+                    ? 'Your email address is listed on your public profile.'
+                    : 'Your email address stays hidden from your profile.'
               }
               checked={Boolean(profile.showEmail)}
               disabled={!profile.isProfilePublic}
