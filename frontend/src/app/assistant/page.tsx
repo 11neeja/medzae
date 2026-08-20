@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
+import Link from 'next/link';
 import { useApp } from '@/context/AppContext';
 import { useAuth } from '@/context/AuthContext';
 import { UserAvatar } from '@/components/ui/user-avatar';
@@ -13,6 +14,8 @@ import ConfirmModal from '@/components/ConfirmModal';
 import FolderChoice from '@/components/FolderChoice';
 import ResizableSidebar from '@/components/ResizableSidebar';
 import MarkdownMessage from '@/components/MarkdownMessage';
+import ZaeAvatar from '@/components/ZaeAvatar';
+import { ZAE } from '@/lib/zae';
 import { markdownToBlocks } from '@/lib/markdownToBlocks';
 import {
   getDocumentsAPI,
@@ -95,7 +98,7 @@ export default function AssistantPage() {
   const WELCOME_MESSAGE: AssistantMessage = {
     id: 'm1',
     sender: 'assistant',
-    text: '👋 Hello! I\'m your **Medzae AI Assistant**.\n\nI can help you with:\n• Answering medical questions\n• Summarizing uploaded documents (PDF, PPT, Images, CSV & more)\n• Explaining complex concepts\n• Providing study tips\n\nUpload a document to get started, or ask me anything!',
+    text: '👋 Hello! I\'m **Zae**, your Medzae AI assistant.\n\nI can help you with:\n• Answering medical questions\n• Summarizing uploaded documents (PDF, PPT, Images, CSV & more)\n• Explaining complex concepts\n• Providing study tips\n\nUpload a document to get started, or ask me anything!',
     createdAt: new Date().toISOString(),
   };
 
@@ -731,10 +734,11 @@ export default function AssistantPage() {
                 )}
               </button>
               <div className="flex items-center gap-2 min-w-0">
-                <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: 'var(--gradient-primary)' }}>
-                  <Bot className="w-4 h-4 text-white" />
-                </div>
-                <span className="text-sm font-semibold text-[var(--color-text-primary)] truncate">Medzae AI</span>
+                <ZaeAvatar size={28} />
+                <span className="text-sm font-semibold text-[var(--color-text-primary)] truncate">
+                  {ZAE.name}
+                  <span className="hidden min-[380px]:inline"> · Medzae AI</span>
+                </span>
               </div>
               {!onlyWelcome && (
                 <button
@@ -766,11 +770,18 @@ export default function AssistantPage() {
                       <div aria-hidden className="pointer-events-none absolute -bottom-24 -left-24 w-56 h-56 rounded-full opacity-40 blur-3xl" style={{ background: 'radial-gradient(circle, var(--color-blue-soft) 0%, transparent 70%)' }} />
 
                       <div className="relative z-10 text-center max-w-md mx-auto">
-                        <div className="w-20 h-20 mx-auto mb-5 rounded-3xl flex items-center justify-center" style={{ background: 'var(--gradient-primary)', boxShadow: 'var(--shadow-btn)' }}>
-                          <Bot className="w-10 h-10 text-white" />
-                        </div>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={ZAE.portrait}
+                          alt={`${ZAE.name}, ${ZAE.role}`}
+                          width={301}
+                          height={487}
+                          className="h-[min(9.5rem,24vh)] w-auto mx-auto mb-3 sm:mb-4 select-none pointer-events-none [@media(max-height:520px)]:hidden"
+                        />
                         <h2 className="heading-2 mb-2">Hi {user?.name?.split(' ')[0] || 'there'}!</h2>
-                        <p className="body-md mb-6">I&apos;m your Medzae AI Assistant. Ask me anything — or upload a document for instant analysis.</p>
+                        <p className="body-md mb-6">
+                          I&apos;m <Link href={ZAE.profileHref} className="font-semibold text-[var(--color-blue-primary)] hover:underline">{ZAE.name}</Link>, your Medzae AI assistant. Ask me anything — or upload a document for instant analysis.
+                        </p>
                       </div>
 
                       <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-w-xl mx-auto">
@@ -806,10 +817,7 @@ export default function AssistantPage() {
                               <UserAvatar userId={user?._id || 'current-user'} name={user?.name || 'You'} avatarUrl={user?.avatarUrl} size={36} />
                             </div>
                           ) : (
-                            <div className="w-9 h-9 rounded-full flex items-center justify-center relative" style={{ background: 'var(--gradient-primary)', boxShadow: 'var(--shadow-btn)' }}>
-                              <Bot className="w-5 h-5 text-white" />
-                              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white" />
-                            </div>
+                            <ZaeAvatar size={36} showPresence />
                           )}
                         </div>
 
@@ -820,7 +828,7 @@ export default function AssistantPage() {
                           {/* Sender + time */}
                           <div className="flex items-center gap-2 text-[11px]">
                             <span className="font-semibold text-[var(--color-text-primary)]">
-                              {isUser ? 'You' : 'Medzae AI'}
+                              {isUser ? 'You' : ZAE.chatName}
                             </span>
                             <span className="text-[var(--color-text-muted)]">·</span>
                             <span className="text-[var(--color-text-muted)]">{formatTime(message.createdAt)}</span>
@@ -860,13 +868,11 @@ export default function AssistantPage() {
                   {isProcessing && (
                     <div className="flex gap-3">
                       <div className="flex-shrink-0">
-                        <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: 'var(--gradient-primary)', boxShadow: 'var(--shadow-btn)' }}>
-                          <Bot className="w-5 h-5 text-white" />
-                        </div>
+                        <ZaeAvatar size={36} />
                       </div>
                       <div className="flex flex-col gap-1 items-start">
                         <div className="flex items-center gap-2 text-[11px]">
-                          <span className="font-semibold text-[var(--color-text-primary)]">Medzae AI</span>
+                          <span className="font-semibold text-[var(--color-text-primary)]">{ZAE.chatName}</span>
                           <span className="text-[var(--color-text-muted)]">·</span>
                           <span className="text-[var(--color-text-muted)]">thinking</span>
                         </div>
