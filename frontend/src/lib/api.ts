@@ -113,6 +113,24 @@ export const getUsersAPI = async () => {
   return res.data
 }
 
+/** A person the note editor can pin into a page with "@". */
+export interface MentionUser {
+  id: string
+  name: string
+  email: string
+  avatarUrl?: string | null
+}
+
+/**
+ * People to offer after "@" in a note. The query matches names, emails and
+ * initials ("jd" finds Jane Doe), and an empty one lists the folks you share
+ * folders with first.
+ */
+export const searchMentionUsersAPI = async (query: string): Promise<MentionUser[]> => {
+  const res = await api.get(`/users/mentions?q=${encodeURIComponent(query)}`)
+  return res.data
+}
+
 export const updateProfileAPI = async (data: ProfileUpdate) => {
   const res = await api.patch('/users/me', data)
   return res.data

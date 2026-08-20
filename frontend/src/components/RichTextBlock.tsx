@@ -1,7 +1,11 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { sanitizeInlineHtml, toEditableHtml } from '@/lib/richText';
+import { insertMention, mentionRect, readMentionContext } from '@/lib/mentions';
+import MentionMenu from '@/components/MentionMenu';
+import type { MentionUser } from '@/lib/api';
 
 interface Props {
   /** Stored block text — plain, or the inline-HTML subset. */
@@ -42,6 +46,15 @@ export default function RichTextBlock({
   // undo, a block switching type).
   const lastEmitted = useRef<string | null>(null);
 
+  // The "@" picker, while one is being typed — null the rest of the time.
+  const [mention, setMention] = useState<{ query: string; rect: DOMRect } | null>(null);
+  // An "@" that was dismissed stays dismissed. Without this, finishing the
+  // word after pressing Escape pops the picker back up on every keystroke.
+  const dismissed = useRef<{ node: Node; at: number } | null>(null);
+  // Portals need a DOM; this component renders on the server too.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -78,54 +91,137 @@ export default function RichTextBlock({
     onChange(html);
   };
 
-  return (
-    <div
-      ref={ref}
-      contentEditable={!readOnly}
-      suppressContentEditableWarning
-      role="textbox"
-      aria-multiline="true"
-      aria-label={placeholder}
-      data-placeholder={placeholder}
-      data-rich-block="true"
-      spellCheck
-      onInput={emit}
-      onBlur={emit}
-      onPaste={(e) => {
-        if (readOnly) return;
-        // Paste as text: anything else drags in styling from another app.
-        e.preventDefault();
-        const text = e.clipboardData.getData('text/plain');
-        document.execCommand('insertText', false, text);
-      }}
-      onKeyDown={(e) => {
-        if (readOnly) return;
+  // Re-read whatever the caret is sitting in. Deliberately tied to typing
+  // rather than to every caret move: parking the cursor after an "@" written
+  // an hour ago shouldn't reopen the picker.
+  const syncMention = () => {
+    const el = ref.current;
+    if (!el || readOnly) {
+      setMention(null);
+      return;
+    }
 
-        if (e.key === 'Enter') {
-          if (e.shiftKey) {
-            // Soft line break inside the block.
+    const context = readMentionContext(el);
+    if (!context) {
+      // The caret has left that "@" behind; the next one starts fresh.
+      dismissed.current = null;
+      setMention(null);
+      return;
+    }
+    if (dismissed.current?.node === context.node && dismissed.current.at === context.at) {
+      setMention(null);
+      return;
+    }
+    setMention({ query: context.query, rect: mentionRect(context) });
+  };
+
+  // Escape, or a click elsewhere: shut the picker and remember which "@" it
+  // belonged to.
+  const closeMention = () => {
+    const el = ref.current;
+    const context = el ? readMentionContext(el) : null;
+    dismissed.current = context ? { node: context.node, at: context.at } : null;
+    setMention(null);
+  };
+
+  // Swap the half-typed "@jd" for the chosen person. The context is read again
+  // here rather than remembered: the caret is the source of truth, and the
+  // picker never takes focus away from it.
+  const pickMention = (user: MentionUser) => {
+    const el = ref.current;
+    setMention(null);
+    if (!el) return;
+    const context = readMentionContext(el);
+    if (!context) return;
+    dismissed.current = null;
+    insertMention(context, user);
+    emit();
+  };
+
+  // The canvas scrolls while you type near its edges; the menu follows rather
+  // than being left behind or closing on a stray wheel nudge.
+  const mentionOpen = mention !== null;
+  useEffect(() => {
+    if (!mentionOpen) return;
+    const track = () => {
+      const el = ref.current;
+      if (!el) return;
+      const context = readMentionContext(el);
+      if (!context) return;
+      const rect = mentionRect(context);
+      setMention(prev => (prev ? { ...prev, rect } : prev));
+    };
+    window.addEventListener('scroll', track, true);
+    window.addEventListener('resize', track);
+    return () => {
+      window.removeEventListener('scroll', track, true);
+      window.removeEventListener('resize', track);
+    };
+  }, [mentionOpen]);
+
+  return (
+    <>
+      <div
+        ref={ref}
+        contentEditable={!readOnly}
+        suppressContentEditableWarning
+        role="textbox"
+        aria-multiline="true"
+        aria-label={placeholder}
+        data-placeholder={placeholder}
+        data-rich-block="true"
+        spellCheck
+        onInput={() => { emit(); syncMention(); }}
+        onBlur={() => { emit(); setMention(null); }}
+        onPaste={(e) => {
+          if (readOnly) return;
+          // Paste as text: anything else drags in styling from another app.
+          e.preventDefault();
+          const text = e.clipboardData.getData('text/plain');
+          document.execCommand('insertText', false, text);
+        }}
+        onKeyDown={(e) => {
+          if (readOnly) return;
+
+          if (e.key === 'Enter') {
+            // A picker with something to offer swallows Enter before this runs,
+            // so reaching here means there was nothing to choose.
+            setMention(null);
+
+            if (e.shiftKey) {
+              // Soft line break inside the block.
+              e.preventDefault();
+              document.execCommand('insertLineBreak');
+              emit();
+              return;
+            }
             e.preventDefault();
-            document.execCommand('insertLineBreak');
-            emit();
+            onEnter?.();
             return;
           }
-          e.preventDefault();
-          onEnter?.();
-          return;
-        }
 
-        if (e.key === 'Backspace' && onBackspaceEmpty) {
-          const el = ref.current;
-          // "Empty" tolerates the single <br> the browser leaves behind when
-          // you clear a block; two or more mean real (blank) lines to delete.
-          const blank = !el?.textContent?.trim() && (el?.querySelectorAll('br').length || 0) <= 1;
-          if (blank && window.getSelection()?.isCollapsed) {
-            e.preventDefault();
-            onBackspaceEmpty();
+          if (e.key === 'Backspace' && onBackspaceEmpty) {
+            const el = ref.current;
+            // "Empty" tolerates the single <br> the browser leaves behind when
+            // you clear a block; two or more mean real (blank) lines to delete.
+            const blank = !el?.textContent?.trim() && (el?.querySelectorAll('br').length || 0) <= 1;
+            if (blank && window.getSelection()?.isCollapsed) {
+              e.preventDefault();
+              onBackspaceEmpty();
+            }
           }
-        }
-      }}
-      className={`nb-rich ${className}`}
-    />
+        }}
+        className={`nb-rich ${className}`}
+      />
+      {mounted && mention && !readOnly && createPortal(
+        <MentionMenu
+          query={mention.query}
+          rect={mention.rect}
+          onPick={pickMention}
+          onClose={closeMention}
+        />,
+        document.body
+      )}
+    </>
   );
 }

@@ -17,6 +17,7 @@ import {
   confirmEmailChange,
   deleteAccount,
   getUserProfile,
+  searchMentionUsers,
 } from '../controllers/userController.js'
 import { protect } from '../middleware/auth.js'
 import { createMemoryUpload } from '../utils/upload.js'
@@ -45,6 +46,9 @@ router.post('/me/email', protect, requestEmailChange)
 router.delete('/me/email', protect, cancelEmailChange)
 
 router.get('/', protect, getUsers)
+// People to offer after "@" in a note. Literal path, so it must sit above the
+// id route below.
+router.get('/mentions', protect, searchMentionUsers)
 // Keep after /me so "me" is never read as an id.
 router.get('/:id/profile', protect, getUserProfile)
 

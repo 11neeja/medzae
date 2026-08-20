@@ -931,6 +931,25 @@ h1, h2, h3, h4, h5, h6 {
     pointer-events: none;
   }
 
+  /* @-mention: a person pinned into a note as a reference. Never a link — it
+     notifies nobody and goes nowhere; it's a name the author wanted to keep.
+     Sized in em so it rides the block's own type scale, from body text to a
+     heading, without ever pushing the line height around. */
+  .nb-mention {
+    padding: 0.0625em 0.3125em;
+    margin-inline: 0.0625em;
+    border-radius: 0.25em;
+    background: var(--color-blue-soft);
+    color: var(--color-navy);
+    font-weight: 600;
+    font-size: 0.9375em;
+    white-space: nowrap;
+    cursor: default;
+    /* Keep the pill intact when a long name wraps to the next line. */
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+
   /* Formatting bar — only ever on screen while text is selected */
   .nb-format-bar {
     position: fixed;

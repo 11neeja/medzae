@@ -870,3 +870,146 @@ export const getUsers = async (req, res) => {
     res.status(500).json({ message: error.message })
   }
 }
+
+// ─── @-mentions ────────────────────────────────────────────────────
+
+const MENTION_LIMIT = 8
+const MENTION_SELECT = { id: true, name: true, email: true, avatarUrl: true }
+
+const HONORIFIC = /^(?:dr|prof|mr|mrs|ms|miss|mx|sir)\.?$/i
+
+/**
+ * The initials someone might type for a name: "Jane Q. Doe" → "jqd", and for
+ * "Dr. Michael Chen" both "dmc" and "mc" — half this directory is titled, and
+ * nobody thinks of a colleague's initials as starting with their doctorate.
+ */
+const initialSetsOf = (name) => {
+  const words = String(name || '').trim().split(/\s+/).filter(Boolean)
+  const first = (word) => word[0].toLowerCase()
+  const sets = [words.map(first).join('')]
+  if (words.length > 1 && HONORIFIC.test(words[0])) {
+    sets.push(words.slice(1).map(first).join(''))
+  }
+  return sets
+}
+
+// @desc    People the current user can @-mention in a note
+// @route   GET /api/users/mentions?q=jd
+//
+// The picker is driven by whatever follows the "@", which is usually initials
+// rather than the start of a name — and SQL can't match initials. So the search
+// runs twice: the substring match the database can do, plus a narrow "name
+// starts with the query's first letter" fetch that JS filters down to real
+// initial sequences. Both sets are merged and ranked.
+export const searchMentionUsers = async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim().toLowerCase()
+    const notMe = { id: { not: req.user.id } }
+
+    // Folder-sharing counterparts rank above name-alike strangers: the people
+    // you already work with are the ones you mean nine times out of ten.
+    const shares = await prisma.folderShare.findMany({
+      where: { OR: [{ ownerId: req.user.id }, { sharedWithId: req.user.id }] },
+      select: { ownerId: true, sharedWithId: true },
+      take: 200,
+    })
+    const collaborators = new Set()
+    for (const share of shares) {
+      collaborators.add(share.ownerId)
+      collaborators.add(share.sharedWithId)
+    }
+    collaborators.delete(req.user.id)
+
+    // Bare "@": nothing to match on yet, so lead with the collaborators and
+    // top the list up alphabetically.
+    if (!q) {
+      const known = collaborators.size
+        ? await prisma.user.findMany({
+            where: { id: { in: [...collaborators] } },
+            select: MENTION_SELECT,
+            orderBy: { name: 'asc' },
+            take: MENTION_LIMIT,
+          })
+        : []
+      const rest = known.length < MENTION_LIMIT
+        ? await prisma.user.findMany({
+            where: { AND: [notMe, { id: { notIn: known.map(u => u.id) } }] },
+            select: MENTION_SELECT,
+            orderBy: { name: 'asc' },
+            take: MENTION_LIMIT - known.length,
+          })
+        : []
+      return res.json([...known, ...rest])
+    }
+
+    const [matches, sameFirstLetter] = await Promise.all([
+      prisma.user.findMany({
+        where: {
+          AND: [
+            notMe,
+            {
+              OR: [
+                { name: { contains: q, mode: 'insensitive' } },
+                { email: { contains: q, mode: 'insensitive' } },
+              ],
+            },
+          ],
+        },
+        select: MENTION_SELECT,
+        take: 40,
+      }),
+      // Initials are short by nature; past four letters it's a name being typed.
+      // A name whose initials match starts one of its words with the query's
+      // first letter — either the whole name ("Jane…") or a later word, which
+      // is where a stripped honorific lands ("Dr. Michael…" for "mc").
+      q.length <= 4
+        ? prisma.user.findMany({
+            where: {
+              AND: [
+                notMe,
+                {
+                  OR: [
+                    { name: { startsWith: q[0], mode: 'insensitive' } },
+                    { name: { contains: ` ${q[0]}`, mode: 'insensitive' } },
+                  ],
+                },
+              ],
+            },
+            select: MENTION_SELECT,
+            take: 200,
+          })
+        : [],
+    ])
+
+    const candidates = new Map()
+    for (const user of [...matches, ...sameFirstLetter]) candidates.set(user.id, user)
+
+    // Lower is better; 99 means the row only came back as an initials candidate
+    // and didn't actually match anything.
+    const rank = (user) => {
+      const name = String(user.name || '').toLowerCase()
+      if (name.startsWith(q)) return 0
+      if (initialSetsOf(name).some(initials => initials.startsWith(q))) return 1
+      if (name.split(/\s+/).some(word => word.startsWith(q))) return 2
+      if (name.includes(q)) return 3
+      if (String(user.email || '').toLowerCase().includes(q)) return 4
+      return 99
+    }
+
+    const ranked = [...candidates.values()]
+      .map(user => ({ user, score: rank(user) }))
+      .filter(row => row.score < 99)
+      .sort((a, b) =>
+        a.score - b.score ||
+        (collaborators.has(b.user.id) ? 1 : 0) - (collaborators.has(a.user.id) ? 1 : 0) ||
+        a.user.name.localeCompare(b.user.name)
+      )
+      .slice(0, MENTION_LIMIT)
+      .map(row => row.user)
+
+    res.json(ranked)
+  } catch (error) {
+    console.error('searchMentionUsers error:', error)
+    res.status(500).json({ message: error.message })
+  }
+}
