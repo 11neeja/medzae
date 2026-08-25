@@ -2,6 +2,99 @@ import prisma from '../config/prisma.js'
 import { resolveStartAt, resolveEndAt, parseDevpostRange } from '../utils/eventSchedule.js'
 import { kickEventReminderSweep, runEventReminderSweep } from '../utils/eventReminders.js'
 
+// ─── Shared helpers ────────────────────────────────────────────────
+// Region bucketing and the medical-relevance filter are used by every
+// source, local and external alike, so they sit above all of them.
+
+// Coarse region buckets used by the "Region" filter on the events page.
+const COUNTRY_REGION = {
+  IN: 'India',
+  US: 'North America', CA: 'North America',
+  MX: 'Latin America', BR: 'Latin America', AR: 'Latin America', CL: 'Latin America',
+  CO: 'Latin America', PE: 'Latin America', UY: 'Latin America', EC: 'Latin America',
+  GB: 'Europe', IE: 'Europe', FR: 'Europe', DE: 'Europe', ES: 'Europe', IT: 'Europe',
+  NL: 'Europe', SE: 'Europe', NO: 'Europe', FI: 'Europe', DK: 'Europe', PL: 'Europe',
+  PT: 'Europe', CH: 'Europe', AT: 'Europe', BE: 'Europe', CZ: 'Europe', GR: 'Europe',
+  RO: 'Europe', HU: 'Europe', UA: 'Europe', RS: 'Europe', SK: 'Europe', BG: 'Europe',
+  CN: 'Asia-Pacific', JP: 'Asia-Pacific', KR: 'Asia-Pacific', SG: 'Asia-Pacific',
+  MY: 'Asia-Pacific', ID: 'Asia-Pacific', TH: 'Asia-Pacific', VN: 'Asia-Pacific',
+  PH: 'Asia-Pacific', AU: 'Asia-Pacific', NZ: 'Asia-Pacific', HK: 'Asia-Pacific',
+  TW: 'Asia-Pacific', BD: 'Asia-Pacific', PK: 'Asia-Pacific', LK: 'Asia-Pacific', NP: 'Asia-Pacific',
+  AE: 'Middle East & Africa', SA: 'Middle East & Africa', QA: 'Middle East & Africa',
+  IL: 'Middle East & Africa', TR: 'Middle East & Africa', EG: 'Middle East & Africa',
+  ZA: 'Middle East & Africa', NG: 'Middle East & Africa', KE: 'Middle East & Africa',
+  MA: 'Middle East & Africa', GH: 'Middle East & Africa',
+}
+
+// Fallback when we only have a free-text location string (no country code).
+const REGION_KEYWORDS = [
+  { region: 'India', re: /\b(india|bengaluru|bangalore|mumbai|delhi|hyderabad|chennai|pune|kolkata|gurgaon|gurugram|noida|ahmedabad|jaipur)\b/i },
+  { region: 'North America', re: /\b(usa|u\.s\.a|united states|america|new york|san francisco|boston|chicago|seattle|los angeles|texas|california|canada|toronto|vancouver|ontario)\b/i },
+  { region: 'Europe', re: /\b(uk|united kingdom|england|london|france|paris|germany|berlin|munich|spain|madrid|barcelona|italy|rome|netherlands|amsterdam|sweden|stockholm|europe|ireland|dublin|poland|portugal|lisbon|switzerland|zurich)\b/i },
+  { region: 'Asia-Pacific', re: /\b(china|beijing|shanghai|japan|tokyo|korea|seoul|singapore|malaysia|indonesia|thailand|bangkok|vietnam|philippines|australia|sydney|melbourne|new zealand|hong kong|taiwan|bangladesh|pakistan|sri lanka|nepal)\b/i },
+  { region: 'Middle East & Africa', re: /\b(uae|dubai|abu dhabi|saudi|qatar|doha|israel|tel aviv|turkey|istanbul|egypt|cairo|africa|nigeria|lagos|kenya|nairobi|south africa|morocco)\b/i },
+  { region: 'Latin America', re: /\b(mexico|brazil|sao paulo|argentina|buenos aires|chile|santiago|colombia|bogota|peru|lima)\b/i },
+]
+
+// Resolve an event to a region bucket. Prefers an ISO country code, then
+// keyword-matches a location string, then defaults to "Other".
+//
+// Whether an event is online deliberately plays no part here. "Online" is a
+// MODE — there is a Mode filter for it — not a place, and folding it in cost
+// real information: an online conference run out of Delhi was filed under
+// "Online" and disappeared from the India list. An online event whose origin
+// we genuinely cannot resolve (Eventbrite sends those with an empty
+// locations array) lands in "Other", like any other unreadable location.
+const deriveRegion = (countryCode, location) => {
+  if (countryCode && COUNTRY_REGION[countryCode.toUpperCase()]) {
+    return COUNTRY_REGION[countryCode.toUpperCase()]
+  }
+  const text = location || ''
+  for (const { region, re } of REGION_KEYWORDS) {
+    if (re.test(text)) return region
+  }
+  return 'Other'
+}
+
+// Medical/healthcare relevance filter. General sources (Hack Club, Devpost)
+// list every kind of event, so we keep only those whose title/themes match
+// these terms. Eventbrite is already health-scoped by its search queries.
+const HEALTH_RE = /\b(health|healthcare|medical|medicine|med-?tech|clinic|clinical|hospital|patient|biotech|bio-?medical|life ?science|pharma|pharmaceutical|wellness|mental health|telemedicine|telehealth|nursing|nurse|surgery|surgical|disease|genom|genetic|diagnos|therapy|therapeutic|neuro|cardio|oncolog|cancer|covid|vaccine|epidemic|pandemic|public health|disability|assistive|accessib|aging|elder|nutrition|mhealth|ehealth|digital health)\b/i
+
+// ─── India-first sourcing ──────────────────────────────────────────
+// MediHub's readers are Indian medical students, so India is not one
+// region bucket among many — it is the primary one, and its events lead
+// the listing.
+//
+// Eventbrite's free-text search barely surfaces Indian listings: asking it
+// for "medical conference Bangalore" returns Bangalore startup meetups and
+// Irish qigong classes long before it returns anything Indian. Scoping the
+// search to a place id does work — every result then really is in India —
+// so India gets its own pass over the same API rather than more keywords.
+const INDIA_PLACE_ID = '85632469' // Eventbrite destination id for India
+
+// Broad medical terms, because the place filter is already doing the
+// narrowing. Each one is a separate (parallel) search.
+const INDIA_QUERIES = [
+  'medical conference',
+  'healthcare',
+  'nursing',
+  'pharma',
+  'clinical research',
+  'hospital management',
+  'medical students',
+  'doctors',
+  'mental health',
+  'medtech',
+  'dental',
+  'physiotherapy',
+]
+
+// India's health searches are dominated by Rishikesh yoga-teacher-training
+// and ayurveda retreat listings — they match the medical vocabulary without
+// being medical events. HEALTH_RE alone lets them all through.
+const INDIA_NOISE_RE = /(yoga|ayurved|retreat|teacher training|\bry[ts] ?\d|meditation|panchakarma|reiki|astrolog|tarot|manifest)/i
+
 // ─── Eventbrite cache (24-hour TTL) ────────────────────────────────
 const EVENTBRITE_TOKEN = process.env.EVENTBRITE_TOKEN
 const EVENTBRITE_BASE  = 'https://www.eventbriteapi.com/v3'
@@ -79,11 +172,17 @@ const formatTime12 = (time24) => {
   return `${hr.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')} ${ampm}`
 }
 
-// Helper: map a single destination_event → our Event shape (imageUrl resolved separately)
-const mapDestinationEvent = (eb, imageUrl) => {
+// Helper: map a single destination_event → our Event shape (imageUrl resolved
+// separately). `fromIndia` marks the India-scoped pass: those events are in
+// India by construction, so they keep the India region even when they run
+// online — "Online" is the bucket for events with no known country, and an
+// Indian webinar is still one of ours.
+const mapDestinationEvent = (eb, imageUrl, fromIndia = false) => {
   const startTime = formatTime12(eb.start_time)
   const endTime   = formatTime12(eb.end_time)
   const timeStr   = startTime && endTime ? `${startTime} - ${endTime}` : startTime || 'TBA'
+  const location  = getLocation(eb.locations, eb.is_online_event)
+  const region    = fromIndia ? 'India' : deriveRegion(null, location)
 
   return {
     _id:              `eb-${eb.id}`,
@@ -95,7 +194,7 @@ const mapDestinationEvent = (eb, imageUrl) => {
     // end_date on single-day events too.
     endDate:          eb.end_date && eb.end_date !== eb.start_date ? eb.end_date : '',
     time:             timeStr,
-    location:         getLocation(eb.locations, eb.is_online_event),
+    location:         location,
     mode:             eb.is_online_event ? 'Online' : 'On-campus',
     type:             mapFormatTag(eb.tags),
     shortDescription: eb.summary || '',
@@ -106,19 +205,45 @@ const mapDestinationEvent = (eb, imageUrl) => {
     registered:       0,
     isRegistered:     false,
     source:           'eventbrite',
+    region,
+    primary:          region === 'India',
+    externalUrl:      eb.url || '',
     eventbriteUrl:    eb.url || '',
   }
 }
 
-// Fetch events from Eventbrite destination/search API (with 24hr cache)
+// One destination search. `places` scopes it geographically; without it the
+// search is worldwide.
+const searchEventbrite = async (q, places) => {
+  const res = await fetch(`${EVENTBRITE_BASE}/destination/search/?token=${EVENTBRITE_TOKEN}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      event_search: {
+        dates: 'current_future',
+        page_size: 20,
+        q,
+        ...(places ? { places } : {}),
+      },
+    }),
+  })
+  if (!res.ok) throw new Error(`status ${res.status}`)
+  const data = await res.json()
+  return data.events?.results || []
+}
+
+// Fetch events from Eventbrite destination/search API (with 24hr cache).
+//
+// Two passes: a worldwide one whose queries carry the medical scope, and an
+// India-scoped one whose place filter carries it instead — see INDIA_QUERIES.
+// The India pass has to be relevance-filtered here, because "everything in
+// India matching 'health'" includes a great many yoga retreats.
 const fetchEventbriteEvents = async () => {
   const now = Date.now()
   if (eventbriteCache.events.length > 0 && now - eventbriteCache.fetchedAt < CACHE_TTL_MS) {
     console.log(`[Eventbrite] Returning ${eventbriteCache.events.length} cached events`)
     return eventbriteCache.events
   }
-
-  const allEvents = []
 
   // Search queries for medical/health events
   const queries = [
@@ -129,38 +254,42 @@ const fetchEventbriteEvents = async () => {
     'clinical research',
   ]
 
-  // Run all searches in parallel — they're independent, so there's no reason
-  // to pay for them one after another (5× the latency).
+  // Every search — worldwide and India-scoped — runs in parallel. They're
+  // independent, so there's no reason to pay for them one after another.
+  const passes = [
+    ...queries.map(q => ({ q, places: null, india: false })),
+    ...INDIA_QUERIES.map(q => ({ q, places: [INDIA_PLACE_ID], india: true })),
+  ]
+
+  const worldwide = []
+  const indian = []
   const searchResults = await Promise.allSettled(
-    queries.map(async (q) => {
-      const res = await fetch(`${EVENTBRITE_BASE}/destination/search/?token=${EVENTBRITE_TOKEN}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          event_search: {
-            dates: 'current_future',
-            page_size: 20,
-            q,
-          },
-        }),
-      })
-      if (!res.ok) throw new Error(`status ${res.status}`)
-      const data = await res.json()
-      return data.events?.results || []
-    })
+    passes.map(({ q, places }) => searchEventbrite(q, places))
   )
   searchResults.forEach((r, i) => {
-    if (r.status === 'fulfilled') allEvents.push(...r.value)
-    else console.error(`[Eventbrite] Search for "${queries[i]}" failed:`, r.reason?.message || r.reason)
+    const { q, india } = passes[i]
+    if (r.status !== 'fulfilled') {
+      console.error(`[Eventbrite] Search for "${q}"${india ? ' (India)' : ''} failed:`, r.reason?.message || r.reason)
+      return
+    }
+    if (!india) { worldwide.push(...r.value); return }
+    // The place filter guarantees the country, not the subject matter.
+    indian.push(...r.value.filter(e => {
+      const title = e.name || ''
+      return HEALTH_RE.test(`${title} ${e.summary || ''}`) && !INDIA_NOISE_RE.test(title)
+    }))
   })
 
-  // Deduplicate by event ID
+  // Deduplicate by event ID. Indian events go in first so that anything found
+  // by both passes keeps its India tag.
   const seen = new Set()
-  const unique = allEvents.filter(e => {
-    if (seen.has(e.id)) return false
+  const unique = []
+  for (const e of [...indian, ...worldwide]) {
+    if (seen.has(e.id)) continue
     seen.add(e.id)
-    return true
-  })
+    unique.push(e)
+  }
+  const indianIds = new Set(indian.map(e => e.id))
 
   // Fetch real image URLs in parallel (batch of 10 at a time to avoid rate limits)
   const imageUrls = new Map()
@@ -170,10 +299,10 @@ const fetchEventbriteEvents = async () => {
     batch.forEach((e, idx) => imageUrls.set(e.id, urls[idx]))
   }
 
-  const mapped = unique.map(e => mapDestinationEvent(e, imageUrls.get(e.id) || ''))
+  const mapped = unique.map(e => mapDestinationEvent(e, imageUrls.get(e.id) || '', indianIds.has(e.id)))
 
   eventbriteCache = { events: mapped, fetchedAt: Date.now() }
-  console.log(`[Eventbrite] Cached ${mapped.length} events at ${new Date().toISOString()}`)
+  console.log(`[Eventbrite] Cached ${mapped.length} events (India: ${mapped.filter(e => e.primary).length}) at ${new Date().toISOString()}`)
   return mapped
 }
 
@@ -211,50 +340,6 @@ export const refreshEventbriteCache = async (req, res) => {
 // A realistic browser UA — some endpoints (Devpost) reject non-browser agents.
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 
-// Coarse region buckets used by the "Region" filter on the events page.
-const COUNTRY_REGION = {
-  IN: 'India',
-  US: 'North America', CA: 'North America',
-  MX: 'Latin America', BR: 'Latin America', AR: 'Latin America', CL: 'Latin America',
-  CO: 'Latin America', PE: 'Latin America', UY: 'Latin America', EC: 'Latin America',
-  GB: 'Europe', IE: 'Europe', FR: 'Europe', DE: 'Europe', ES: 'Europe', IT: 'Europe',
-  NL: 'Europe', SE: 'Europe', NO: 'Europe', FI: 'Europe', DK: 'Europe', PL: 'Europe',
-  PT: 'Europe', CH: 'Europe', AT: 'Europe', BE: 'Europe', CZ: 'Europe', GR: 'Europe',
-  RO: 'Europe', HU: 'Europe', UA: 'Europe', RS: 'Europe', SK: 'Europe', BG: 'Europe',
-  CN: 'Asia-Pacific', JP: 'Asia-Pacific', KR: 'Asia-Pacific', SG: 'Asia-Pacific',
-  MY: 'Asia-Pacific', ID: 'Asia-Pacific', TH: 'Asia-Pacific', VN: 'Asia-Pacific',
-  PH: 'Asia-Pacific', AU: 'Asia-Pacific', NZ: 'Asia-Pacific', HK: 'Asia-Pacific',
-  TW: 'Asia-Pacific', BD: 'Asia-Pacific', PK: 'Asia-Pacific', LK: 'Asia-Pacific', NP: 'Asia-Pacific',
-  AE: 'Middle East & Africa', SA: 'Middle East & Africa', QA: 'Middle East & Africa',
-  IL: 'Middle East & Africa', TR: 'Middle East & Africa', EG: 'Middle East & Africa',
-  ZA: 'Middle East & Africa', NG: 'Middle East & Africa', KE: 'Middle East & Africa',
-  MA: 'Middle East & Africa', GH: 'Middle East & Africa',
-}
-
-// Fallback when we only have a free-text location string (no country code).
-const REGION_KEYWORDS = [
-  { region: 'India', re: /\b(india|bengaluru|bangalore|mumbai|delhi|hyderabad|chennai|pune|kolkata|gurgaon|gurugram|noida|ahmedabad|jaipur)\b/i },
-  { region: 'North America', re: /\b(usa|u\.s\.a|united states|america|new york|san francisco|boston|chicago|seattle|los angeles|texas|california|canada|toronto|vancouver|ontario)\b/i },
-  { region: 'Europe', re: /\b(uk|united kingdom|england|london|france|paris|germany|berlin|munich|spain|madrid|barcelona|italy|rome|netherlands|amsterdam|sweden|stockholm|europe|ireland|dublin|poland|portugal|lisbon|switzerland|zurich)\b/i },
-  { region: 'Asia-Pacific', re: /\b(china|beijing|shanghai|japan|tokyo|korea|seoul|singapore|malaysia|indonesia|thailand|bangkok|vietnam|philippines|australia|sydney|melbourne|new zealand|hong kong|taiwan|bangladesh|pakistan|sri lanka|nepal)\b/i },
-  { region: 'Middle East & Africa', re: /\b(uae|dubai|abu dhabi|saudi|qatar|doha|israel|tel aviv|turkey|istanbul|egypt|cairo|africa|nigeria|lagos|kenya|nairobi|south africa|morocco)\b/i },
-  { region: 'Latin America', re: /\b(mexico|brazil|sao paulo|argentina|buenos aires|chile|santiago|colombia|bogota|peru|lima)\b/i },
-]
-
-// Resolve an event to a region bucket. Prefers an ISO country code, then
-// keyword-matches a location string, then defaults to "Other".
-const deriveRegion = (countryCode, location, isOnline) => {
-  if (isOnline) return 'Online'
-  if (countryCode && COUNTRY_REGION[countryCode.toUpperCase()]) {
-    return COUNTRY_REGION[countryCode.toUpperCase()]
-  }
-  const text = location || ''
-  for (const { region, re } of REGION_KEYWORDS) {
-    if (re.test(text)) return region
-  }
-  return 'Other'
-}
-
 // Format an HH:MM time slice out of an ISO timestamp (UTC).
 const isoTimeUTC = (iso) => {
   if (!iso) return ''
@@ -262,11 +347,6 @@ const isoTimeUTC = (iso) => {
   if (isNaN(d.getTime())) return ''
   return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
 }
-
-// Medical/healthcare relevance filter. General sources (Hack Club, Devpost)
-// list every kind of event, so we keep only those whose title/themes match
-// these terms. Eventbrite is already health-scoped by its search queries.
-const HEALTH_RE = /\b(health|healthcare|medical|medicine|med-?tech|clinic|clinical|hospital|patient|biotech|bio-?medical|life ?science|pharma|pharmaceutical|wellness|mental health|telemedicine|telehealth|nursing|nurse|surgery|surgical|disease|genom|genetic|diagnos|therapy|therapeutic|neuro|cardio|oncolog|cancer|covid|vaccine|epidemic|pandemic|public health|disability|assistive|accessib|aging|elder|nutrition|mhealth|ehealth|digital health)\b/i
 
 // ── Hack Club: free, no-auth JSON of upcoming hackathons worldwide ──
 const HACKCLUB_URL = 'https://hackathons.hackclub.com/api/events/upcoming'
@@ -287,6 +367,7 @@ const fetchHackClubEvents = async () => {
         : [e.city, e.state, e.country].filter(Boolean).join(', ') || 'TBA'
       const start = isoTimeUTC(e.start)
       const end = isoTimeUTC(e.end)
+      const region = deriveRegion(e.countryCode, location)
       return {
         _id: `hc-${e.id}`,
         id: `hc-${e.id}`,
@@ -308,7 +389,8 @@ const fetchHackClubEvents = async () => {
         registered: 0,
         isRegistered: false,
         source: 'hackclub',
-        region: deriveRegion(e.countryCode, location, isOnline),
+        region,
+        primary: region === 'India',
         externalUrl: e.website || '',
       }
     })
@@ -320,7 +402,6 @@ const fetchHackClubEvents = async () => {
 
 // ── Devpost: unofficial but stable JSON of hackathons (filtered to health-tech) ──
 const DEVPOST_URL = 'https://devpost.com/api/hackathons'
-
 
 const fetchDevpostEvents = async () => {
   const collected = []
@@ -347,6 +428,7 @@ const fetchDevpostEvents = async () => {
       : ''
     const prize = h.prize_amount ? String(h.prize_amount).replace(/<[^>]+>/g, '') : ''
     const devpostRange = parseDevpostRange(h.submission_period_dates)
+    const region = deriveRegion(null, location)
     return {
       _id: `dp-${h.id}`,
       id: `dp-${h.id}`,
@@ -366,10 +448,141 @@ const fetchDevpostEvents = async () => {
       registered: h.registrations_count || 0,
       isRegistered: false,
       source: 'devpost',
-      region: deriveRegion(null, location, isOnline),
+      region,
+      primary: region === 'India',
       externalUrl: h.url || '',
     }
   })
+}
+
+// ── Unstop: India's student-opportunity platform (free, no auth) ──
+// The only source here that is Indian by construction rather than by
+// filtering, and the only one carrying listings Eventbrite structurally
+// cannot: a GE HealthCare challenge, a Manipal conference, a national
+// pharma quiz. The yield is small — a handful of live medical listings at
+// a time — but it is exactly this audience.
+//
+// The endpoint is public and unauthenticated but undocumented, so it can
+// change shape without notice. Same risk class as the Devpost feed above:
+// isolated in its own fetcher, and a failure costs nothing but its rows.
+const UNSTOP_URL = 'https://unstop.com/api/public/opportunity/search-result'
+
+// Unstop splits listings by "opportunity" type. These five are events a
+// student turns up to; the rest (jobs, internships, scholarships) belong on
+// the opportunities page, not the calendar.
+const UNSTOP_TYPES = ['conferences', 'workshops', 'competitions', 'hackathons', 'quizzes']
+
+// Their vocabulary → ours. Competitions and quizzes have no exact bucket in
+// our five types; "Fest" is this codebase's catch-all for a gathering that
+// isn't a talk or a hackathon, which is the least-wrong home for them.
+const UNSTOP_TYPE = {
+  conferences:  'Conference',
+  workshops:    'Workshop',
+  hackathons:   'Hackathon',
+  competitions: 'Fest',
+  quizzes:      'Fest',
+}
+
+// Unstop ships its descriptions as HTML.
+const stripHtml = (html) => (html || '').replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/gi, ' ').replace(/\s+/g, ' ').trim()
+
+// Unstop stamps everything +05:30, so show its times in IST and say so.
+// A midnight stamp means the listing carried a date and no time; returning
+// '' for those keeps us from inventing a precise "12:00 AM" deadline.
+const istTime = (iso) => {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  const hhmm = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' })
+  if (hhmm === '00:00') return ''
+  return `${d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })} IST`
+}
+
+const fetchUnstopEvents = async () => {
+  const collected = []
+  // Four pages per type. The feed is not ordered by relevance, so the few
+  // medical listings sit wherever they happen to fall — the GE HealthCare
+  // challenge is on page 3 of hackathons, and a two-page cap silently lost
+  // it. Every page is one parallel no-auth GET behind a 24h cache.
+  const pages = UNSTOP_TYPES.flatMap(type => [1, 2, 3, 4].map(page => ({ type, page })))
+
+  const results = await Promise.allSettled(pages.map(async ({ type, page }) => {
+    const res = await fetch(`${UNSTOP_URL}?opportunity=${type}&oppstatus=open&page=${page}&per_page=30`, {
+      headers: { 'User-Agent': BROWSER_UA, Accept: 'application/json' },
+    })
+    if (!res.ok) throw new Error(`status ${res.status}`)
+    const data = await res.json()
+    return data?.data?.data || []
+  }))
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') collected.push(...r.value)
+    else console.error(`[Unstop] ${pages[i].type} p${pages[i].page} failed:`, r.reason?.message || r.reason)
+  })
+
+  const seen = new Set()
+  return collected
+    .filter(o => {
+      if (!o || seen.has(o.id)) return false
+      // The feed still carries closed listings; a finished one is not an event.
+      if (o.regnRequirements?.reg_status === 'FINISHED') return false
+      // Unstop AI-tags each listing with skills ("Precision Medicine"), which
+      // catches medical entries whose title alone gives nothing away.
+      const skills = (o.required_skills || []).map(sk => sk.skill_name || sk.skill).join(' ')
+      if (!HEALTH_RE.test(`${o.title || ''} ${o.organisation?.name || ''} ${skills}`)) return false
+      seen.add(o.id)
+      return true
+    })
+    .map(o => {
+      const addr = o.address_with_country_logo
+      const isOnline = o.region === 'online' || !addr?.city
+      const location = isOnline
+        ? 'Online'
+        : [addr.city, addr.state, addr.country?.name].filter(Boolean).join(', ')
+
+      // Unstop is an Indian platform: an online listing there is an Indian
+      // event without a venue, not one of unknown origin — the same call the
+      // Eventbrite India pass makes. Only an explicitly foreign address moves
+      // it out of the India bucket.
+      const iso = addr?.country?.iso
+      const region = iso && iso !== 'IN' ? deriveRegion(iso, location) : 'India'
+
+      // What the public feed exposes is the CLOSING date, not a start instant
+      // — there is no detail endpoint that gives one. So the date we carry is
+      // the deadline, and every place it surfaces says so rather than dressing
+      // it up as a start time. A reminder the day before therefore means
+      // "registration closes tomorrow", which is the useful reading anyway.
+      const deadline = o.end_date || o.regnRequirements?.end_regn_dt || ''
+      const closes = deadline
+        ? new Date(deadline).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })
+        : ''
+      const org = o.organisation?.name || 'Unstop'
+
+      return {
+        _id: `us-${o.id}`,
+        id: `us-${o.id}`,
+        title: o.title || 'Untitled Opportunity',
+        organizer: org,
+        date: deadline,
+        endDate: '',
+        time: istTime(deadline) ? `Closes ${istTime(deadline)}` : 'TBA',
+        location,
+        mode: isOnline ? 'Online' : 'On-campus',
+        type: UNSTOP_TYPE[o.type] || 'Conference',
+        shortDescription: [
+          closes ? `Registration closes ${closes}` : 'Open for registration',
+          o.registerCount ? `${o.registerCount.toLocaleString('en-IN')} registered` : '',
+        ].filter(Boolean).join(' · '),
+        longDescription: stripHtml(o.details).slice(0, 900) || `${o.title} — hosted by ${org} on Unstop. Visit the listing for eligibility, schedule, and registration.`,
+        imageUrl: o.logoUrl2 || '',
+        featured: false,
+        capacity: null,
+        registered: o.registerCount || 0,
+        isRegistered: false,
+        source: 'unstop',
+        region,
+        primary: region === 'India',
+        externalUrl: o.seo_url || (o.public_url ? `https://unstop.com/${o.public_url}` : ''),
+      }
+    })
 }
 
 // ── Aggregator: merge every source behind one 24hr in-memory cache ──
@@ -383,38 +596,50 @@ let externalRefreshInFlight = null
 
 // Run the actual multi-source aggregation and repopulate the cache.
 const refreshExternalCache = async () => {
-  const [ebRes, hcRes, dpRes] = await Promise.allSettled([
+  const [ebRes, hcRes, dpRes, usRes] = await Promise.allSettled([
     fetchEventbriteEvents(),
     fetchHackClubEvents(),
     fetchDevpostEvents(),
+    fetchUnstopEvents(),
   ])
 
-  // Eventbrite events predate the region/externalUrl fields — backfill them.
+  // Backfill anything a source left off the normalised shape.
   const eb = (ebRes.status === 'fulfilled' ? ebRes.value : []).map(e => ({
     ...e,
     externalUrl: e.externalUrl || e.eventbriteUrl || '',
-    region: e.region || deriveRegion(null, e.location, e.mode === 'Online'),
+    region: e.region || deriveRegion(null, e.location),
+    primary: e.primary ?? (e.region === 'India'),
   }))
   const hc = hcRes.status === 'fulfilled' ? hcRes.value : []
   const dp = dpRes.status === 'fulfilled' ? dpRes.value : []
+  const us = usRes.status === 'fulfilled' ? usRes.value : []
 
-  // Merge + dedupe by id
+  // Merge + dedupe. The id check catches the same listing arriving twice;
+  // the title+date check catches organisers who publish one event several
+  // times over (three separate "Gujarat Medical Expo 2026" listings, same
+  // day, same city), which would otherwise fill the India lead with repeats.
   const seen = new Set()
-  const merged = [...eb, ...hc, ...dp].filter(e => {
+  const seenListing = new Set()
+  const merged = [...eb, ...hc, ...dp, ...us].filter(e => {
     if (!e || seen.has(e.id)) return false
+    const listing = `${(e.title || '').trim().toLowerCase()}|${e.date || ''}`
+    if (seenListing.has(listing)) return false
     seen.add(e.id)
+    seenListing.add(listing)
     return true
   })
 
-  // Sort by date ascending; undated events sink to the bottom.
+  // Indian events lead — they're what this audience can actually attend.
+  // Within each group, by date ascending; undated events sink to the bottom.
   merged.sort((a, b) => {
+    if (!!a.primary !== !!b.primary) return a.primary ? -1 : 1
     const da = a.date ? new Date(a.date).getTime() : Infinity
     const db = b.date ? new Date(b.date).getTime() : Infinity
     return da - db
   })
 
   externalCache = { events: merged, fetchedAt: Date.now() }
-  console.log(`[External] Cached ${merged.length} events (EB:${eb.length} HC:${hc.length} DP:${dp.length})`)
+  console.log(`[External] Cached ${merged.length} events (EB:${eb.length} HC:${hc.length} DP:${dp.length} US:${us.length}) — ${merged.filter(e => e.primary).length} Indian`)
   return merged
 }
 
@@ -486,10 +711,12 @@ export const getEvents = async (req, res) => {
     })
     const eventsWithStatus = events.map(event => {
       const { registeredUsers, ...rest } = event
+      const region = deriveRegion(null, event.location)
       return {
         ...rest,
         _id: event.id,
-        region: deriveRegion(null, event.location, event.mode === 'Online'),
+        region,
+        primary: region === 'India',
         registered: registeredUsers.length,
         isRegistered: req.user
           ? registeredUsers.some(u => u.id === req.user.id)

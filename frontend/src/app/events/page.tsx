@@ -28,14 +28,32 @@ interface Event {
   capacity?: number;
   registered?: number;
   isNew?: boolean;
-  source?: 'local' | 'eventbrite' | 'hackclub' | 'devpost' | string;
+  source?: 'local' | 'eventbrite' | 'hackclub' | 'devpost' | 'unstop' | string;
   eventbriteUrl?: string;
   externalUrl?: string;
   region?: string;
+  /** Indian event — leads the listing and carries the India badge. */
+  primary?: boolean;
 }
 
-// Canonical region buckets (matches the backend) in display order.
-const REGION_ORDER = ['Online', 'India', 'North America', 'Europe', 'Asia-Pacific', 'Middle East & Africa', 'Latin America', 'Other'];
+// Canonical region buckets (matches the backend) in display order. India
+// comes first: this is an Indian audience, so it is the primary region and
+// the one the listing leads with.
+//
+// "Online" is deliberately NOT here. It is a mode, and the Mode filter above
+// already offers it; listing it as a region both duplicated that control and
+// hid real geography (an online event run from Delhi belongs under India).
+const REGION_ORDER = ['India', 'North America', 'Europe', 'Asia-Pacific', 'Middle East & Africa', 'Latin America', 'Other'];
+
+// Sources that supply a square logo rather than a wide banner. Filling the
+// card's image slot with one crops it into an unreadable fragment, so these
+// are contained on a white ground and keep their whole mark.
+const LOGO_SOURCES = new Set(['unstop']);
+
+// An event is "primary" when it's an Indian one. The backend sets the flag;
+// the region fallback covers events served before it existed (a cached
+// payload, an older backend) so the listing never silently loses its lead.
+const isPrimaryEvent = (e: Event): boolean => e.primary ?? e.region === 'India';
 
 // Source filter options — label shown to the user, value matches event.source.
 const SOURCE_OPTIONS: { label: string; value: string }[] = [
@@ -44,6 +62,7 @@ const SOURCE_OPTIONS: { label: string; value: string }[] = [
   { label: 'Eventbrite', value: 'eventbrite' },
   { label: 'Hack Club', value: 'hackclub' },
   { label: 'Devpost', value: 'devpost' },
+  { label: 'Unstop', value: 'unstop' },
 ];
 
 // Friendly label for an event's source (used on external register buttons).
@@ -52,14 +71,17 @@ const sourceLabel = (source?: string): string => {
     case 'eventbrite': return 'Eventbrite';
     case 'hackclub': return 'Hack Club';
     case 'devpost': return 'Devpost';
+    case 'unstop': return 'Unstop';
     default: return 'site';
   }
 };
 
 // Client-side region fallback — used for events that arrive without a region
-// (e.g. older cached entries). Mirrors the backend's coarse bucketing.
-const regionFromLocation = (location?: string, mode?: string): string => {
-  if (mode === 'Online' || !location || /online/i.test(location)) return 'Online';
+// (e.g. older cached entries). Mirrors the backend's coarse bucketing, which
+// is geography-only: an event with no readable location is 'Other', whether
+// it happens to be online or not.
+const regionFromLocation = (location?: string): string => {
+  if (!location) return 'Other';
   const t = location.toLowerCase();
   if (/india|bengaluru|bangalore|mumbai|delhi|hyderabad|chennai|pune|kolkata|noida|gurgaon|gurugram|ahmedabad|jaipur/.test(t)) return 'India';
   if (/usa|united states|america|canada|new york|san francisco|boston|toronto|chicago|seattle|los angeles|texas|california/.test(t)) return 'North America';
@@ -152,9 +174,9 @@ export default function EventsPage() {
   // The cache is only used to paint something instantly on load; every visit
   // still fetches fresh events (see the effect below), so we never surface a
   // stale timestamp — the header always reflects the current session.
-  // v2: events now carry a `region` field — bump key to drop stale caches.
-  const CACHE_KEY = 'medihub_events_cache_v2';
-  const CACHE_TS_KEY = 'medihub_events_cache_v2_ts';
+  // v4: 'Online' is no longer a region — bump key to drop stale caches.
+  const CACHE_KEY = 'medihub_events_cache_v4';
+  const CACHE_TS_KEY = 'medihub_events_cache_v4_ts';
 
   const saveToCache = (eventsList: Event[]) => {
     try {
@@ -192,7 +214,8 @@ export default function EventsPage() {
     capacity: apiEvent.capacity || 100,
     registered: apiEvent.registered || 0,
     source: 'local',
-    region: apiEvent.region || regionFromLocation(apiEvent.location, apiEvent.mode),
+    region: apiEvent.region || regionFromLocation(apiEvent.location),
+    primary: apiEvent.primary ?? (apiEvent.region || regionFromLocation(apiEvent.location)) === 'India',
   });
 
   // Helper to map an aggregated external event (Eventbrite / Hack Club / Devpost)
@@ -216,7 +239,8 @@ export default function EventsPage() {
     source: e.source || 'eventbrite',
     externalUrl: e.externalUrl || e.eventbriteUrl || '',
     eventbriteUrl: e.eventbriteUrl || e.externalUrl || '',
-    region: e.region || regionFromLocation(e.location, e.mode),
+    region: e.region || regionFromLocation(e.location),
+    primary: e.primary ?? (e.region || regionFromLocation(e.location)) === 'India',
   });
 
   // Every visit fetches fresh events. The cache only paints something instantly
@@ -370,10 +394,16 @@ export default function EventsPage() {
     const matchesRegion = regionFilter === 'All' || event.region === regionFilter;
 
     return matchesSearch && matchesType && matchesMode && matchesDate && matchesSource && matchesRegion;
-  });
+  })
+    // Indian events lead — they're the ones this audience can actually turn
+    // up to. `sort` is stable, so within each group the order the sources
+    // arrived in (date ascending, from the backend) is left untouched.
+    .sort((a, b) => Number(isPrimaryEvent(b)) - Number(isPrimaryEvent(a)));
 
-  // Regions actually present in the current event set (canonical order), for the filter UI
-  const availableRegions = ['All', ...REGION_ORDER.filter(r => events.some(e => e.region === r))];
+  // Regions present in the current event set (canonical order), for the filter
+  // UI. India is always offered even when a fetch turned up none of it — it's
+  // the region this audience filters by, and its absence would read as a bug.
+  const availableRegions = ['All', ...REGION_ORDER.filter(r => r === 'India' || events.some(e => e.region === r))];
 
   // Pagination
   const totalPages = Math.ceil(filteredEvents.length / EVENTS_PER_PAGE);
@@ -722,6 +752,9 @@ export default function EventsPage() {
             <div className="p-7 md:p-9">
               <div className="mb-7">
                 <div className="flex flex-wrap gap-1.5 mb-4">
+                  {isPrimaryEvent(selectedEvent) && (
+                    <span className="badge badge-warning">India</span>
+                  )}
                   <span className="badge">{selectedEvent.mode}</span>
                   <span className="badge badge-muted">{selectedEvent.type}</span>
                   {isRegisteredNow(selectedEvent) && (
@@ -1067,7 +1100,11 @@ export default function EventsPage() {
                           <img
                             src={event.imageUrl}
                             alt={event.title}
-                            className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                            className={`absolute inset-0 w-full h-full group-hover:scale-105 transition-transform duration-500 ${
+                              LOGO_SOURCES.has(event.source ?? '')
+                                ? 'object-contain bg-white p-5'
+                                : 'object-cover'
+                            }`}
                             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                           />
                         ) : (
@@ -1103,6 +1140,9 @@ export default function EventsPage() {
                       <div className="flex-1 p-6 md:p-7 flex flex-col">
                         <div className="flex-1">
                           <div className="flex flex-wrap items-center gap-2 mb-3">
+                            {isPrimaryEvent(event) && (
+                              <span className="badge badge-sm badge-warning">India</span>
+                            )}
                             <span className="badge badge-sm">{event.mode}</span>
                             <span className="badge badge-sm badge-muted">{event.type}</span>
                             {isRegisteredNow(event) && (
