@@ -594,6 +594,32 @@ const fetchUnstopEvents = async () => {
 let externalCache = { events: [], fetchedAt: 0 }
 let externalRefreshInFlight = null
 
+// ── Production diagnostics ─────────────────────────────────────────
+// The aggregator swallows a failing source on purpose: one dead API must not
+// take the events page down. The cost is that a source can go silently
+// missing in production, where every /api/events route needs a session and
+// the server log is the only other witness. So it reports itself, the same
+// way the `mail` and `ai` blocks of GET /api/health do — an unauthenticated
+// read of what the cache actually holds and which source last failed, so a
+// question like "why are there no Indian events?" is answerable without a login.
+let externalDiagnostics = {
+  refreshedAt: null,
+  total: 0,
+  indian: 0,
+  sources: {},
+  regions: {},
+}
+
+export const getEventDiagnostics = () => ({
+  ...externalDiagnostics,
+  cached: externalCache.events.length,
+  ageMinutes: externalCache.fetchedAt
+    ? Math.round((Date.now() - externalCache.fetchedAt) / 60000)
+    : null,
+  eventbriteToken: EVENTBRITE_TOKEN ? 'configured' : 'missing',
+})
+
+
 // Run the actual multi-source aggregation and repopulate the cache.
 const refreshExternalCache = async () => {
   const [ebRes, hcRes, dpRes, usRes] = await Promise.allSettled([
@@ -639,6 +665,23 @@ const refreshExternalCache = async () => {
   })
 
   externalCache = { events: merged, fetchedAt: Date.now() }
+  const settled = { eventbrite: ebRes, hackclub: hcRes, devpost: dpRes, unstop: usRes }
+  externalDiagnostics = {
+    refreshedAt: new Date().toISOString(),
+    total: merged.length,
+    indian: merged.filter(e => e.primary).length,
+    sources: Object.fromEntries(Object.entries(settled).map(([name, r]) => [
+      name,
+      r.status === "fulfilled"
+        ? { ok: true, count: r.value.length }
+        : { ok: false, count: 0, error: String(r.reason?.message || r.reason).slice(0, 200) },
+    ])),
+    regions: merged.reduce((acc, e) => {
+      const key = e.region || "Other"
+      acc[key] = (acc[key] || 0) + 1
+      return acc
+    }, {}),
+  }
   console.log(`[External] Cached ${merged.length} events (EB:${eb.length} HC:${hc.length} DP:${dp.length} US:${us.length}) — ${merged.filter(e => e.primary).length} Indian`)
   return merged
 }

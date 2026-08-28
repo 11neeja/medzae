@@ -21,7 +21,7 @@ import seedDatabase from './utils/seed.js'
 import { hasMailConfig, verifyMailerConnection, getMailerStatus, getMailerDiagnostics } from './utils/mailer.js'
 import { getAIDiagnostics } from './controllers/aiController.js'
 import { hasGoogleAuthConfig } from './controllers/userController.js'
-import { warmExternalEvents } from './controllers/eventController.js'
+import { warmExternalEvents, getEventDiagnostics } from './controllers/eventController.js'
 import { startEventReminderScheduler } from './utils/eventReminders.js'
 
 const app = express()
@@ -179,6 +179,7 @@ const startServer = async () => {
         smtp: getMailerStatus(),
         mail: getMailerDiagnostics(),
         ai: getAIDiagnostics(),
+        events: getEventDiagnostics(),
         googleAuth: { configured: hasGoogleAuthConfig() },
         timestamp: new Date().toISOString(),
       })
@@ -190,6 +191,7 @@ const startServer = async () => {
         smtp: getMailerStatus(),
         mail: getMailerDiagnostics(),
         ai: getAIDiagnostics(),
+        events: getEventDiagnostics(),
         googleAuth: { configured: hasGoogleAuthConfig() },
         timestamp: new Date().toISOString(),
       })
