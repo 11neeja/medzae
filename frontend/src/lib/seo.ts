@@ -27,6 +27,13 @@ export const SITE_DESCRIPTION =
 export const CONTACT_EMAIL = 'contact@medzae.com'
 export const GITHUB_URL = 'https://github.com/11neeja/medihub'
 
+// Public social account. Declared once here so the handle, the profile URL,
+// and the `sameAs` entry below can never drift apart — every follow link in
+// the app (landing contact block, landing footer, signed-in sidebar, email
+// footers) resolves back to these two constants.
+export const INSTAGRAM_HANDLE = 'medzae_web'
+export const INSTAGRAM_URL = `https://www.instagram.com/${INSTAGRAM_HANDLE}/`
+
 // Query phrases Medzae should surface for. Google ignores the keywords meta
 // tag outright; Bing and some AI crawlers still read it, so it costs nothing
 // to keep — but it is the weakest signal here and adding head terms like
@@ -93,7 +100,10 @@ export const SITE_GRAPH = {
       url: SITE_URL,
       logo: { '@type': 'ImageObject', url: `${SITE_URL}/icon.svg` },
       email: CONTACT_EMAIL,
-      sameAs: [GITHUB_URL],
+      // sameAs is how Google ties this Organization to the profiles that
+      // represent it elsewhere — the Instagram account is the public-facing
+      // one, so it leads.
+      sameAs: [INSTAGRAM_URL, GITHUB_URL],
     },
     {
       '@type': 'WebSite',

@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import SessionSplash from '@/components/SessionSplash';
+import FollowInstagram from '@/components/FollowInstagram';
 import { useAuth, hasStoredSession } from '@/context/AuthContext';
 import { sendContactMessageAPI } from '@/lib/api';
 import { jsonLd } from '@/lib/seo';
@@ -573,15 +574,22 @@ export default function LandingPage() {
                 Have questions? We would love to hear from you. Drop us a line and our team will get
                 back to you shortly.
               </p>
-              <a
-                href={`mailto:${CONTACT_EMAIL}`}
-                className="inline-flex items-center gap-3 px-5 py-3 rounded-full bg-[var(--color-accent-soft)] border border-[var(--color-border-mid)] max-w-full"
-              >
-                <span className="w-9 h-9 rounded-full bg-[var(--color-blue-primary)] flex items-center justify-center flex-shrink-0">
-                  <Mail className="w-4 h-4 text-white" />
-                </span>
-                <span className="font-semibold text-[var(--color-navy)] truncate">{CONTACT_EMAIL}</span>
-              </a>
+              <div className="flex flex-wrap items-center gap-3">
+                <a
+                  href={`mailto:${CONTACT_EMAIL}`}
+                  className="inline-flex items-center gap-3 px-5 py-3 rounded-full bg-[var(--color-accent-soft)] border border-[var(--color-border-mid)] max-w-full"
+                >
+                  <span className="w-9 h-9 rounded-full bg-[var(--color-blue-primary)] flex items-center justify-center flex-shrink-0">
+                    <Mail className="w-4 h-4 text-white" />
+                  </span>
+                  <span className="font-semibold text-[var(--color-navy)] truncate">{CONTACT_EMAIL}</span>
+                </a>
+                <FollowInstagram variant="pill" />
+              </div>
+              <p className="text-sm text-[var(--color-text-muted)] mt-5">
+                Prefer to keep up casually? Follow us on Instagram for updates, new features, and
+                medical highlights.
+              </p>
             </div>
 
             <div className="bg-white rounded-[2rem] border border-[#EEF2F6] shadow-[0_16px_48px_rgba(11,59,145,0.08)] p-8 sm:p-10">
@@ -700,6 +708,7 @@ export default function LandingPage() {
             <p className="text-xs text-white/50 mt-1.5 max-w-[260px] leading-relaxed">
               The medical learning platform for students, doctors, professors, and researchers.
             </p>
+            <FollowInstagram variant="footer" className="mt-4" />
           </div>
           <div className="flex flex-wrap justify-center gap-6 text-sm text-white/70">
             <button type="button" onClick={() => scrollToSection('features')} className="hover:text-white transition-colors">

@@ -415,7 +415,9 @@ export const sendWelcomeEmail = async ({ name, email }) =>
     toName: name,
     subject: 'Welcome to Medzae',
     html: buildWelcomeEmail({ name }),
-    text: `Welcome to Medzae, ${name}. Visit ${process.env.FRONTEND_URL || 'http://localhost:3000'}/home to get started.`,
+    text: `Welcome to Medzae, ${name}. Visit ${process.env.FRONTEND_URL || 'http://localhost:3000'}/home to get started.
+
+Follow us on Instagram for more updates: https://www.instagram.com/medzae_web/`,
   })
 
 export const sendPasswordResetEmail = async ({ name, email, resetUrl }) =>

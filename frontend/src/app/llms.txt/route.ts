@@ -3,6 +3,8 @@ import {
   SITE_NAME,
   CONTACT_EMAIL,
   GITHUB_URL,
+  INSTAGRAM_URL,
+  INSTAGRAM_HANDLE,
 } from '@/lib/seo'
 
 // AI-assistant site summary, served at /llms.txt. This was a static file in
@@ -31,6 +33,7 @@ ${SITE_NAME} (also searched as "medzae web", "medzae website", or "med zae") uni
 - Platform: web application (works in any modern browser, desktop and mobile)
 - Features: medical news feed, events discovery, notebook workspace, groups, real-time chat, opportunities board, AI study assistant
 - Contact: ${CONTACT_EMAIL}
+- Instagram: @${INSTAGRAM_HANDLE} (${INSTAGRAM_URL}) — announcements, new features, and medical highlights
 - Source: ${GITHUB_URL}
 
 ## FAQ

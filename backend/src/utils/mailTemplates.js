@@ -9,6 +9,12 @@ const theme = {
   border: '#D8E2F1',
 }
 
+// Public Instagram account, mirrored from frontend/src/lib/seo.ts. Every mail
+// the platform sends carries it in the footer, so a welcome or reminder email
+// is also a chance to pick up a follower.
+const INSTAGRAM_HANDLE = 'medzae_web'
+const INSTAGRAM_URL = `https://www.instagram.com/${INSTAGRAM_HANDLE}/`
+
 // Escape user-supplied values before interpolating them into email HTML —
 // the contact form's name/email/message come straight from a public form.
 const esc = (value) =>
@@ -32,7 +38,8 @@ const shell = (content) => `
         </div>
       </div>
       <div style="text-align:center;font-size:12px;color:${theme.muted};padding:18px 10px 0;line-height:1.6;">
-        Medzae • Built for medical learning and collaboration
+        Medzae • Built for medical learning and collaboration<br>
+        Follow us on <a href="${INSTAGRAM_URL}" style="color:${theme.blue};text-decoration:none;font-weight:700;">Instagram @${INSTAGRAM_HANDLE}</a> for more updates
       </div>
     </div>
   </div>
