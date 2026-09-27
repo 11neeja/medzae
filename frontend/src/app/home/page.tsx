@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import ResizableSidebar from '@/components/ResizableSidebar';
 import FollowInstagram from '@/components/FollowInstagram';
+import NewsDetailModal, { type NewsItem } from '@/components/NewsDetailModal';
 import { getNewsAPI, getTrendingTopicsAPI } from '@/lib/api';
 import {
   Star,
@@ -16,25 +17,10 @@ import {
   Bot,
   X,
   RefreshCw,
-  ExternalLink,
+  ArrowRight,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
-
-// NewsItem interface matching backend response
-interface NewsItem {
-  id: string;
-  title: string;
-  summary: string;
-  imageUrl: string;
-  url: string;
-  tags: string[];
-  source: string;
-  specialty: string;
-  timeAgo: string;
-  publishedAt: string;
-  featured?: boolean;
-}
 
 const specialties = [
   'All',
@@ -113,11 +99,11 @@ export default function HomePage() {
     .filter(item => selectedSpecialty !== 'All' && item.specialty === selectedSpecialty)
     .slice(0, 3);
 
-  const handleArticleClick = (article: NewsItem) => {
-    if (article.url) {
-      window.open(article.url, '_blank', 'noopener,noreferrer');
-    }
-  };
+  const [openArticle, setOpenArticle] = useState<NewsItem | null>(null);
+  const closeArticle = useCallback(() => setOpenArticle(null), []);
+
+  // Open the in-app detail view; the original source is one click away from there.
+  const handleArticleClick = (article: NewsItem) => setOpenArticle(article);
 
   return (
     <div className="min-h-screen">
@@ -209,7 +195,7 @@ export default function HomePage() {
                     <span className="w-1 h-1 rounded-full bg-white/40" />
                     <span>{featuredArticle.timeAgo}</span>
                     <span className="ml-auto inline-flex items-center gap-1 group-hover:gap-2 transition-all">
-                      Read story <ExternalLink className="w-3 h-3" />
+                      Read story <ArrowRight className="w-3 h-3" />
                     </span>
                   </div>
                 </div>
@@ -465,11 +451,9 @@ export default function HomePage() {
                               <span key={tag} className="badge badge-sm">{tag}</span>
                             ))}
                           </div>
-                          {article.url && (
-                            <span className="text-xs uppercase tracking-[0.18em] font-semibold text-[var(--color-text-muted)] group-hover:text-[var(--color-navy)] inline-flex items-center gap-1 transition-colors">
-                              Read <ExternalLink className="w-3 h-3" strokeWidth={2} />
-                            </span>
-                          )}
+                          <span className="text-xs uppercase tracking-[0.18em] font-semibold text-[var(--color-text-muted)] group-hover:text-[var(--color-navy)] inline-flex items-center gap-1 transition-colors">
+                            Read <ArrowRight className="w-3 h-3" strokeWidth={2} />
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -558,6 +542,8 @@ export default function HomePage() {
         </div>
       </div>
       </div>
+
+      <NewsDetailModal article={openArticle} onClose={closeArticle} />
     </div>
   );
 }

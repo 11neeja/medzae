@@ -40,6 +40,16 @@ const MEDICAL_RE = /\b(?:health|medic|clinic|hospital|patient|doctor|physician|n
 export const isMedicalArticle = (article) =>
   MEDICAL_RE.test(`${article?.title || ''} ${article?.description || ''}`)
 
+// NewsAPI's `content` is a ~200-char excerpt that sometimes carries HTML and
+// always ends in a "[+1234 chars]" marker. Keep only the readable text.
+const cleanContent = (content) =>
+  (content || '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s*\[\+\d+ chars\]\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/(…|\.\.\.)$/, '')
+
 // Map article to our standard shape
 const mapArticle = (raw, index) => {
   // Derive specialty from keywords in title + description
@@ -88,6 +98,8 @@ const mapArticle = (raw, index) => {
     id: `news-${index}-${Date.now()}`,
     title: raw.title || 'Untitled',
     summary: raw.description || raw.content || '',
+    content: cleanContent(raw.content),
+    author: (raw.author || '').trim(),
     imageUrl: raw.urlToImage || '',
     url: raw.url || '',
     tags: tags.slice(0, 4), // max 4 tags
