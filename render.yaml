@@ -28,8 +28,10 @@ services:
       - key: FRONTEND_URL
         sync: false
       # Gmail relay (Apps Script web app, backend/scripts/gmail-relay.gs):
-      # free path to authenticated gmail.com inbox delivery over HTTPS.
+      # the only provider that can deliver from Render, over HTTPS.
       # URL is the deployed /exec URL; SECRET must match the script's constant.
+      # It sends as SMTP_FROM_EMAIL, which must be a verified "Send mail as"
+      # alias of the relay's Gmail account — see that key below.
       - key: GMAIL_RELAY_URL
         sync: false
       - key: GMAIL_RELAY_SECRET
@@ -40,8 +42,8 @@ services:
       - key: MAIL_PROVIDER_ORDER
         value: gmail-relay,smtp
       # Gmail SMTP is fixed config, not a secret — pin it here so the only
-      # dashboard-managed values are the account (SMTP_USER/SMTP_FROM_EMAIL)
-      # and the app password (SMTP_PASS). 465 = implicit TLS, reliable on Render.
+      # dashboard-managed values are the account (SMTP_USER) and the app
+      # password (SMTP_PASS). 465 = implicit TLS, reliable on Render.
       - key: SMTP_HOST
         value: smtp.gmail.com
       - key: SMTP_PORT
@@ -60,8 +62,16 @@ services:
         sync: false
       - key: SMTP_FROM_NAME
         value: Medzae
+      # The single address all Medzae mail is sent from — brand config, not a
+      # secret. Whoever delivers it must be authorised to use it, because
+      # medzae.com publishes p=quarantine DMARC: contact@medzae.com has to be
+      # a verified "Send mail as" alias of the relay's Gmail account, set to
+      # send through mailserver.businessidentity.llc (the domain's own mail
+      # host) so SPF and DKIM stay aligned. If it is not, mail still goes out
+      # — from the Gmail address — and GET /api/health reports it under
+      # mail.lastWarning.
       - key: SMTP_FROM_EMAIL
-        sync: false
+        value: contact@medzae.com
       - key: AI_PROVIDER
         value: gemini
       - key: GEMINI_API_KEY

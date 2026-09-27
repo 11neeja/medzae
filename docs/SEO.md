@@ -122,9 +122,14 @@ here and both fail silently:
 
 - The domain publishes `p=quarantine` DMARC, so any mail claiming to be from
   `@medzae.com` that is not SPF- or DKIM-aligned goes to spam — including
-  password resets. The app sends as the Gmail relay account, not as
-  `@medzae.com`, so this is only a hazard if `SMTP_FROM_EMAIL` is ever pointed
-  at a `medzae.com` address without authenticating that sender first.
+  password resets. The app now sends as `contact@medzae.com`
+  (`SMTP_FROM_EMAIL`) through the Gmail relay, which is only aligned because
+  that address is a verified *Send mail as* alias in the relay's Gmail
+  account **routed through `mailserver.businessidentity.llc`**. Set to send
+  through Gmail instead, the same mail would be signed `gmail.com`, fail
+  alignment, and be quarantined. If the alias is ever removed the backend
+  falls back to the Gmail address and flags it in `mail.lastWarning` on
+  `GET /api/health`.
 - If you ever add a sending service, that means **editing the one existing SPF
   TXT record**, never adding a second. Two SPF records on a domain is a
   permanent error that fails SPF for everything, the real mailbox included.

@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
 import { OAuth2Client } from 'google-auth-library'
 import prisma from '../config/prisma.js'
-import { hasMailConfig, sendWelcomeEmail, sendPasswordResetEmail, sendEmailChangeEmail, sendTestEmail, sendContactEmail } from '../utils/mailer.js'
+import { hasMailConfig, sendWelcomeEmail, sendPasswordResetEmail, sendEmailChangeEmail, sendTestEmail, sendContactEmail, getMailerDiagnostics } from '../utils/mailer.js'
 import { persistFile, removeUploadedFile } from '../utils/storage.js'
 
 const PASSWORD_POLICY = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/
@@ -790,7 +790,16 @@ export const sendMailDiagnostic = async (req, res) => {
 
   try {
     const result = await sendTestEmail({ name: req.user.name, email: req.user.email })
-    res.json({ ok: true, provider: result.provider, messageId: result.messageId, to: req.user.email })
+    // `from` + `warning` answer the other half of the question: it arrived,
+    // but did it arrive as contact@medzae.com or as the relay's own account?
+    res.json({
+      ok: true,
+      provider: result.provider,
+      messageId: result.messageId,
+      to: req.user.email,
+      from: result.from,
+      warning: getMailerDiagnostics().lastWarning?.message || null,
+    })
   } catch (error) {
     res.status(502).json({ ok: false, message: error.message })
   }

@@ -191,7 +191,7 @@ Set these environment variables on Render:
 - `DATABASE_URL`
 - `JWT_SECRET`
 - `FRONTEND_URL` — deployed frontend URL; password-reset links break without it
-- `GMAIL_RELAY_URL` + `GMAIL_RELAY_SECRET` — free Gmail relay via Google Apps Script (deploy `backend/scripts/gmail-relay.gs`, instructions inside). Authenticated gmail.com mail straight to inboxes, ~100 recipients/day.
+- `GMAIL_RELAY_URL` + `GMAIL_RELAY_SECRET` — free Gmail relay via Google Apps Script (deploy `backend/scripts/gmail-relay.gs`, instructions inside). Sends over HTTPS, ~100 recipients/day, and is the only provider that works from Render.
 - `MAIL_PROVIDER_ORDER` — optional; defaults to `gmail-relay,smtp`. Render cannot reach smtp.gmail.com, so keep smtp last there; locally `smtp,gmail-relay` is nice.
 - `SMTP_HOST`
 - `SMTP_PORT`
@@ -199,10 +199,12 @@ Set these environment variables on Render:
 - `SMTP_FAMILY=4` to force IPv4 SMTP connections from Render
 - `SMTP_USER`
 - `SMTP_PASS`
-- `SMTP_FROM_NAME` if you want a custom sender name
-- `SMTP_FROM_EMAIL` if your SMTP provider supports a custom from address
+- `SMTP_FROM_NAME` — sender name; defaults to `Medzae`
+- `SMTP_FROM_EMAIL` — the address every email is sent from; defaults to `contact@medzae.com`
 
-Mail debugging in production: `GET /api/health` returns a `mail` block with the configured providers plus the last success/error, and a logged-in `POST /api/users/test-email` sends a probe to your own address and reports which provider delivered it.
+**Sending as `contact@medzae.com`.** Both providers relay through a Gmail account, so that account has to be allowed to use the address — `medzae.com` publishes `p=quarantine` DMARC, and unaligned mail is quarantined as spam. Once, in the relay's Gmail account: Settings → Accounts → *Send mail as* → add `contact@medzae.com`, and when asked, send **through `mailserver.businessidentity.llc`** (port 465, SSL, the mailbox's own credentials) rather than through Gmail — that keeps SPF and DKIM signed by the domain. Confirm the verification link from the Northwest webmail, then redeploy the Apps Script (Deploy → Manage deployments → edit → *New version*) so it picks up `from` support. Until that is done mail still sends, from the Gmail address, and the backend says so.
+
+Mail debugging in production: `GET /api/health` returns a `mail` block with the configured providers, the sender address in use, the last success/error, and `lastWarning` when mail is being delivered under the wrong From. A logged-in `POST /api/users/test-email` sends a probe to your own address and reports which provider delivered it and from which address.
 - `AI_PROVIDER=gemini`
 - `GEMINI_API_KEY` — create one at https://aistudio.google.com/apikey
 - `GEMINI_MODEL` — optional; defaults to `gemini-flash-latest` (a rolling alias, so it survives Google's model retirements). Retired names like `gemini-1.5-flash` are ignored, and the backend automatically falls back across current Gemini models. AI debugging in production: the `ai` block of `GET /api/health` shows the active model and any models the API has retired.

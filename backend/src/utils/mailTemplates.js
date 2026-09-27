@@ -13,7 +13,7 @@ const theme = {
 // the platform sends carries it in the footer, so a welcome or reminder email
 // is also a chance to pick up a follower.
 const INSTAGRAM_HANDLE = 'medzae_web'
-const INSTAGRAM_URL = `https://www.instagram.com/${INSTAGRAM_HANDLE}/`
+export const INSTAGRAM_URL = `https://www.instagram.com/${INSTAGRAM_HANDLE}/`
 
 // Escape user-supplied values before interpolating them into email HTML —
 // the contact form's name/email/message come straight from a public form.

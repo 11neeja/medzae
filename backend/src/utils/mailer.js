@@ -1,6 +1,6 @@
 import dotenv from 'dotenv'
 import nodemailer from 'nodemailer'
-import { buildWelcomeEmail, buildPasswordResetEmail, buildEmailChangeEmail, buildDiagnosticEmail, buildContactEmail, buildEventReminderEmail } from './mailTemplates.js'
+import { buildWelcomeEmail, buildPasswordResetEmail, buildEmailChangeEmail, buildDiagnosticEmail, buildContactEmail, buildEventReminderEmail, INSTAGRAM_URL } from './mailTemplates.js'
 
 dotenv.config()
 
@@ -9,16 +9,35 @@ dotenv.config()
 //
 //   1. gmail-relay — a Google Apps Script web app (see
 //      backend/scripts/gmail-relay.gs) that sends through the real Gmail
-//      account over HTTPS. Best inbox deliverability (authenticated
-//      gmail.com mail) and reachable from hosts that block SMTP, but
+//      account over HTTPS. Reachable from hosts that block SMTP, but
 //      capped at ~100 recipients/day on consumer Gmail. Enabled by
 //      GMAIL_RELAY_URL + GMAIL_RELAY_SECRET.
-//   2. smtp — Gmail/Nodemailer with sanitized credentials and 465/587
-//      port fallback. Enabled by SMTP_HOST + SMTP_USER + SMTP_PASS.
+//   2. smtp — Nodemailer with sanitized credentials and 465/587 port
+//      fallback. Enabled by SMTP_HOST + SMTP_USER + SMTP_PASS.
 //      Unreachable from Render (connection timeouts), works locally.
 //
 // Any provider alone works; with several configured, the next one is the
 // automatic fallback, so no single provider outage can stop mail.
+//
+// ── Sender identity ─────────────────────────────────────────────
+// Everything goes out as SMTP_FROM_EMAIL (contact@medzae.com), never as
+// the underlying Gmail account. Both providers relay through an account
+// that is not the domain, so that address has to be authorised or the
+// mail is forged in DMARC's eyes:
+//
+//   • gmail-relay — contact@medzae.com must be a verified "Send mail as"
+//     alias of the relay's Gmail account, configured to send through
+//     mailserver.businessidentity.llc (the medzae.com mail host) rather
+//     than through Gmail.
+//   • smtp — SMTP_FROM_EMAIL must be SMTP_USER itself or that same
+//     verified alias.
+//
+// The reason is medzae.com's DNS: SPF authorises only the domain's own
+// hosts and Postal, DKIM is signed by Postal (postal-kzzsgu._domainkey),
+// and DMARC is p=quarantine. Mail that Gmail signs as gmail.com while
+// claiming to be @medzae.com is aligned with neither, so it lands in
+// spam — password resets included. Routing through the domain's mail
+// server keeps both signatures aligned. See docs/SEO.md → DNS.
 
 const trimmed = (value) => (value || '').trim()
 
@@ -51,6 +70,9 @@ const NOT_CONFIGURED_HINT =
 let mailerStatus = 'unverified' // 'not_configured' | 'unverified' | 'ok' | 'error'
 let lastSuccess = null // { provider, label, at }
 let lastError = null // { provider, label, message, at }
+// Delivered, but not as the sender we asked for — the one failure mode that
+// looks healthy from the outside (mail arrives, from the wrong address).
+let lastWarning = null // { provider, message, at }
 
 const sanitizeErrorMessage = (message) =>
   String(message || 'Unknown error').replace(/\s+/g, ' ').trim().slice(0, 300)
@@ -60,8 +82,10 @@ export const getMailerStatus = () => (hasMailConfig() ? mailerStatus : 'not_conf
 export const getMailerDiagnostics = () => ({
   configured: getProviders().map((provider) => provider.name), // in try-order
   status: getMailerStatus(),
+  from: getFromAddress(), // what recipients actually see in their inbox
   lastSuccess,
   lastError,
+  lastWarning,
 })
 
 const recordSuccess = (provider, label) => {
@@ -73,8 +97,20 @@ const recordFailure = (provider, label, error) => {
   lastError = { provider, label, message: sanitizeErrorMessage(error.message), at: new Date().toISOString() }
 }
 
+// Called on every relay send, so a fixed alias clears the warning on its own.
+const recordWarning = (provider, message) => {
+  lastWarning = message ? { provider, message: sanitizeErrorMessage(message), at: new Date().toISOString() } : null
+  if (message) console.warn(`Mail warning (${provider}): ${sanitizeErrorMessage(message)}`)
+}
+
+// The brand mailbox on medzae.com. It is the default sender and the
+// contact-form recipient, so forgetting SMTP_FROM_EMAIL somewhere can only
+// leave mail addressed as Medzae — never as the personal Gmail account
+// that happens to be relaying it.
+const BRAND_EMAIL = 'contact@medzae.com'
+
 const getFromParts = () => ({
-  email: trimmed(process.env.SMTP_FROM_EMAIL) || smtpUser(),
+  email: trimmed(process.env.SMTP_FROM_EMAIL) || BRAND_EMAIL,
   name: trimmed(process.env.SMTP_FROM_NAME) || 'Medzae',
 })
 
@@ -170,16 +206,35 @@ const gmailRelayRequest = async (payload) => {
 }
 
 const sendViaGmailRelay = async ({ to, subject, html, text, replyTo }) => {
-  await gmailRelayRequest({
+  const { email, name } = getFromParts()
+
+  const data = await gmailRelayRequest({
     to,
     subject,
     html,
     text,
     ...(replyTo ? { replyTo } : {}),
-    fromName: trimmed(process.env.SMTP_FROM_NAME) || 'Medzae',
+    // The relay sends as this address when it is a verified "Send mail as"
+    // alias of its Gmail account, and reports a warning when it is not.
+    from: email,
+    fromName: name,
   })
-  // Apps Script cannot report the Gmail message id — acceptance is the signal.
-  return { messageId: null }
+
+  // A relay that answers without naming a sender is running a deployment
+  // from before `from` support — it delivered, but as the Gmail account.
+  recordWarning(
+    'gmail-relay',
+    data.from
+      ? data.warning
+      : 'The Apps Script relay did not report a sender, so it is running an older deployment that ignores ' +
+        `the From address and still sends as its own Gmail account instead of ${email}. Re-deploy ` +
+        'backend/scripts/gmail-relay.gs at script.google.com (Deploy → Manage deployments → edit → New version).'
+  )
+
+  // Apps Script cannot report the Gmail message id — acceptance is the
+  // signal. `from` is null only on a relay too old to report one, where
+  // claiming the address we asked for would be a guess.
+  return { messageId: null, from: data.from || null }
 }
 
 // ── Provider: Gmail SMTP (Nodemailer) ───────────────────────────
@@ -260,7 +315,7 @@ const describeSmtpFailure = (error) => {
   }
 
   if (error?.code === 'EDNS' || /ENOTFOUND|EAI_AGAIN/i.test(message)) {
-    return 'DNS lookup for the SMTP host failed. Check SMTP_HOST (expected: smtp.gmail.com).'
+    return `DNS lookup for the SMTP host failed. Check SMTP_HOST (currently "${smtpHost()}").`
   }
 
   return null
@@ -314,7 +369,7 @@ const sendViaSmtp = async ({ label, to, subject, html, text, replyTo }) => {
     transporter.sendMail({ from: getFromAddress(), to, subject, html, text, ...(replyTo ? { replyTo } : {}) })
   )
   assertMailAccepted(info, label)
-  return { messageId: info.messageId || null }
+  return { messageId: info.messageId || null, from: getFromParts().email }
 }
 
 // ── Unified dispatch ────────────────────────────────────────────
@@ -352,7 +407,11 @@ const deliver = async (label, message) => {
     try {
       const result = await provider.send({ label, ...message })
       recordSuccess(provider.name, label)
-      console.log(`${label} sent via ${provider.name}:`, { to: message.to, messageId: result.messageId })
+      console.log(`${label} sent via ${provider.name}:`, {
+        to: message.to,
+        from: result.from,
+        messageId: result.messageId,
+      })
       return { provider: provider.name, ...result }
     } catch (error) {
       recordFailure(provider.name, label, error)
@@ -378,6 +437,21 @@ export const verifyMailerConnection = async () => {
       const pong = await gmailRelayRequest({ ping: true })
       const remaining = typeof pong.remaining === 'number' ? `${pong.remaining} sends left today` : 'reachable'
       results.push(`gmail-relay ok (${remaining})`)
+
+      // The relay answers with its verified "Send mail as" aliases, so the
+      // sender can be checked at boot instead of discovered from a user's
+      // password reset arriving from a stranger's Gmail address.
+      const { email } = getFromParts()
+      const aliases = Array.isArray(pong.aliases) ? pong.aliases : null
+      if (aliases && email && !aliases.includes(email)) {
+        recordWarning(
+          'gmail-relay',
+          `The relay's Gmail account cannot send as ${email} — it is not one of its verified "Send mail as" ` +
+            `aliases (${aliases.length ? aliases.join(', ') : 'none configured'}), so mail goes out from the ` +
+            'Gmail address. Add it in Gmail → Settings → Accounts → Send mail as, routed through ' +
+            'mailserver.businessidentity.llc.'
+        )
+      }
     } catch (error) {
       recordFailure('gmail-relay', 'Gmail relay verification', error)
       failures.push(`gmail-relay: ${sanitizeErrorMessage(error.message)}`)
@@ -409,15 +483,31 @@ export const verifyMailerConnection = async () => {
 
 // ── Application emails ──────────────────────────────────────────
 
+const frontendUrl = () => trimmed(process.env.FRONTEND_URL) || 'http://localhost:3000'
+
+// Plain-text alternatives are written out in full rather than stubbed. A rich
+// HTML part next to a one-line text part reads as bulk mail to spam filters,
+// and the text part is what some clients and most screen readers render. Keep
+// the two saying the same thing, and always say why this mail was sent —
+// "why am I getting this" is a question filters and people both ask.
+const asText = (body, reason) =>
+  `${body.trim()}\n\n—\nMedzae · ${frontendUrl()}\nInstagram: ${INSTAGRAM_URL}\n${reason}`
+
 export const sendWelcomeEmail = async ({ name, email }) =>
   deliver('Welcome email', {
     to: email,
     toName: name,
     subject: 'Welcome to Medzae',
     html: buildWelcomeEmail({ name }),
-    text: `Welcome to Medzae, ${name}. Visit ${process.env.FRONTEND_URL || 'http://localhost:3000'}/home to get started.
+    text: asText(
+      `Hi ${name},
 
-Follow us on Instagram for more updates: https://www.instagram.com/medzae_web/`,
+Welcome to Medzae. Your account is ready — your dashboard, medical feed,
+notebook, chat, events and the AI assistant are all in one place.
+
+Get started: ${frontendUrl()}/home`,
+      'You are receiving this because a Medzae account was created with this address.'
+    ),
   })
 
 export const sendPasswordResetEmail = async ({ name, email, resetUrl }) =>
@@ -426,7 +516,17 @@ export const sendPasswordResetEmail = async ({ name, email, resetUrl }) =>
     toName: name,
     subject: 'Reset your Medzae password',
     html: buildPasswordResetEmail({ name, resetUrl }),
-    text: `Reset your Medzae password: ${resetUrl}`,
+    text: asText(
+      `Hi ${name},
+
+We received a request to reset your Medzae password. Choose a new one here:
+
+${resetUrl}
+
+The link expires in one hour and can only be used once. If you did not ask
+for this, ignore this email — your password stays exactly as it is.`,
+      'You are receiving this because a password reset was requested for this address on Medzae.'
+    ),
   })
 
 // Email change confirmation — always delivered to the NEW address, which is
@@ -437,7 +537,18 @@ export const sendEmailChangeEmail = async ({ name, newEmail, confirmUrl }) =>
     toName: name,
     subject: 'Confirm your new Medzae email',
     html: buildEmailChangeEmail({ name, confirmUrl, newEmail }),
-    text: `Confirm your new Medzae email address: ${confirmUrl}`,
+    text: asText(
+      `Hi ${name},
+
+You asked to change the email you sign in to Medzae with to ${newEmail}.
+Confirm it here:
+
+${confirmUrl}
+
+Your current address keeps working until you confirm, and the link expires
+in one hour. If you did not ask for this, ignore this email — nothing changes.`,
+      'You are receiving this because this address was entered as a new sign-in email on Medzae.'
+    ),
   })
 
 // One-click production probe (POST /api/users/test-email): sends to the
@@ -448,7 +559,15 @@ export const sendTestEmail = async ({ name, email }) =>
     toName: name,
     subject: 'Medzae mail delivery check',
     html: buildDiagnosticEmail({ name }),
-    text: 'Mail delivery from Medzae is working. Welcome and password-reset emails will reach users.',
+    text: asText(
+      `Hi ${name},
+
+You asked Medzae to check its mail delivery. This message reached you, so
+welcome, password-reset and event-reminder emails will reach users too.
+
+Sent ${new Date().toUTCString()}.`,
+      'You are receiving this because you triggered a delivery check from your Medzae account.'
+    ),
   })
 
 // Event reminder (1 day before / morning of), sent by the reminder sweep in
@@ -456,20 +575,32 @@ export const sendTestEmail = async ({ name, email }) =>
 // gets here, so a delivery failure costs the user this one email rather than
 // re-sending on every subsequent sweep.
 export const sendEventReminderEmail = async ({ name, email, title, when, location, lead, eventUrl }) => {
-  const calendarUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/events?calendar=1`
+  const calendarUrl = `${frontendUrl()}/events?calendar=1`
   return deliver('Event reminder', {
     to: email,
     toName: name,
     subject: lead === 'day-of' ? `Today — ${title}` : `Tomorrow — ${title}`,
     html: buildEventReminderEmail({ name, title, when, location, lead, eventUrl, calendarUrl }),
-    text: `${lead === 'day-of' ? 'Today' : 'Tomorrow'}: ${title}\n${when}\n${location || ''}\n\nOpen your calendar: ${calendarUrl}`,
+    text: asText(
+      `Hi ${name},
+
+${lead === 'day-of' ? 'An event you registered for starts today.' : 'An event you registered for starts tomorrow.'}
+
+${title}
+When: ${when}
+Where: ${location || 'To be announced'}
+${eventUrl ? `Event page: ${eventUrl}\n` : ''}
+Open your calendar: ${calendarUrl}`,
+      'You are receiving this because you marked yourself as registered for this event on Medzae. ' +
+        'Remove it from your calendar to stop its reminders.'
+    ),
   })
 }
 
 // Where the landing-page "Get in touch" form is delivered. Overridable via
 // CONTACT_RECIPIENT_EMAIL (Render dashboard); defaults to the Medzae inbox.
 export const getContactRecipient = () =>
-  trimmed(process.env.CONTACT_RECIPIENT_EMAIL) || 'contact@medzae.com'
+  trimmed(process.env.CONTACT_RECIPIENT_EMAIL) || BRAND_EMAIL
 
 // Public contact form (POST /api/users/contact): delivered to the Medzae
 // inbox with the sender set as reply-to, so a reply goes straight to them.
