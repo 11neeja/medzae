@@ -5,6 +5,7 @@ import {
   GITHUB_URL,
   INSTAGRAM_URL,
   INSTAGRAM_HANDLE,
+  WHATSAPP_COMMUNITY_URL,
 } from '@/lib/seo'
 
 // AI-assistant site summary, served at /llms.txt. This was a static file in
@@ -34,6 +35,7 @@ ${SITE_NAME} (also searched as "medzae web", "medzae website", or "med zae") uni
 - Features: medical news feed, events discovery, notebook workspace, groups, real-time chat, opportunities board, AI study assistant
 - Contact: ${CONTACT_EMAIL}
 - Instagram: @${INSTAGRAM_HANDLE} (${INSTAGRAM_URL}) — announcements, new features, and medical highlights
+- WhatsApp community: ${WHATSAPP_COMMUNITY_URL} — open group chat for members
 - Source: ${GITHUB_URL}
 
 ## FAQ

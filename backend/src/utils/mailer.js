@@ -1,6 +1,6 @@
 import dotenv from 'dotenv'
 import nodemailer from 'nodemailer'
-import { buildWelcomeEmail, buildPasswordResetEmail, buildEmailChangeEmail, buildDiagnosticEmail, buildContactEmail, buildEventReminderEmail, INSTAGRAM_URL } from './mailTemplates.js'
+import { buildWelcomeEmail, buildPasswordResetEmail, buildEmailChangeEmail, buildDiagnosticEmail, buildContactEmail, buildEventReminderEmail, INSTAGRAM_URL, WHATSAPP_COMMUNITY_URL } from './mailTemplates.js'
 
 dotenv.config()
 
@@ -491,7 +491,7 @@ const frontendUrl = () => trimmed(process.env.FRONTEND_URL) || 'http://localhost
 // the two saying the same thing, and always say why this mail was sent —
 // "why am I getting this" is a question filters and people both ask.
 const asText = (body, reason) =>
-  `${body.trim()}\n\n—\nMedzae · ${frontendUrl()}\nInstagram: ${INSTAGRAM_URL}\n${reason}`
+  `${body.trim()}\n\n—\nMedzae · ${frontendUrl()}\nInstagram: ${INSTAGRAM_URL}\nWhatsApp community: ${WHATSAPP_COMMUNITY_URL}\n${reason}`
 
 export const sendWelcomeEmail = async ({ name, email }) =>
   deliver('Welcome email', {

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import ResizableSidebar from '@/components/ResizableSidebar';
-import FollowInstagram from '@/components/FollowInstagram';
+import SocialLinks from '@/components/SocialLinks';
 import NewsDetailModal, { type NewsItem } from '@/components/NewsDetailModal';
 import { getNewsAPI, getTrendingTopicsAPI } from '@/lib/api';
 import {
@@ -535,7 +535,7 @@ export default function HomePage() {
             {/* Follow us — the signed-in surface people actually live on, so
                 the social prompt belongs here rather than only on the landing
                 page most members never scroll back to. */}
-            <FollowInstagram variant="card" />
+            <SocialLinks variant="card" />
           </aside>
           </ResizableSidebar>
 

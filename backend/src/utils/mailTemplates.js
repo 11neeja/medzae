@@ -9,11 +9,13 @@ const theme = {
   border: '#D8E2F1',
 }
 
-// Public Instagram account, mirrored from frontend/src/lib/seo.ts. Every mail
-// the platform sends carries it in the footer, so a welcome or reminder email
-// is also a chance to pick up a follower.
+// Public social channels, mirrored from frontend/src/lib/seo.ts — the two
+// codebases share no module, so a change there has to be made here too. Every
+// mail the platform sends carries them in the footer, so a welcome or a
+// reminder is also a chance to pick up a follower or a member.
 const INSTAGRAM_HANDLE = 'medzae_web'
 export const INSTAGRAM_URL = `https://www.instagram.com/${INSTAGRAM_HANDLE}/`
+export const WHATSAPP_COMMUNITY_URL = 'https://chat.whatsapp.com/Jzer5HAAqopLS7WwrLBLYy'
 
 // Escape user-supplied values before interpolating them into email HTML —
 // the contact form's name/email/message come straight from a public form.
@@ -39,7 +41,8 @@ const shell = (content) => `
       </div>
       <div style="text-align:center;font-size:12px;color:${theme.muted};padding:18px 10px 0;line-height:1.6;">
         Medzae • Built for medical learning and collaboration<br>
-        Follow us on <a href="${INSTAGRAM_URL}" style="color:${theme.blue};text-decoration:none;font-weight:700;">Instagram @${INSTAGRAM_HANDLE}</a> for more updates
+        Follow us on <a href="${INSTAGRAM_URL}" style="color:${theme.blue};text-decoration:none;font-weight:700;">Instagram @${INSTAGRAM_HANDLE}</a>
+        or join our <a href="${WHATSAPP_COMMUNITY_URL}" style="color:${theme.blue};text-decoration:none;font-weight:700;">WhatsApp community</a>
       </div>
     </div>
   </div>

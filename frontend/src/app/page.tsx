@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import SessionSplash from '@/components/SessionSplash';
-import FollowInstagram from '@/components/FollowInstagram';
+import SocialLinks from '@/components/SocialLinks';
 import { useAuth, hasStoredSession } from '@/context/AuthContext';
 import { sendContactMessageAPI } from '@/lib/api';
 import { jsonLd } from '@/lib/seo';
@@ -584,11 +584,11 @@ export default function LandingPage() {
                   </span>
                   <span className="font-semibold text-[var(--color-navy)] truncate">{CONTACT_EMAIL}</span>
                 </a>
-                <FollowInstagram variant="pill" />
+                <SocialLinks variant="pill" />
               </div>
               <p className="text-sm text-[var(--color-text-muted)] mt-5">
-                Prefer to keep up casually? Follow us on Instagram for updates, new features, and
-                medical highlights.
+                Prefer to keep it casual? Follow us on Instagram for updates and new features, or
+                join the WhatsApp community to talk to us and to each other.
               </p>
             </div>
 
@@ -708,7 +708,7 @@ export default function LandingPage() {
             <p className="text-xs text-white/50 mt-1.5 max-w-[260px] leading-relaxed">
               The medical learning platform for students, doctors, professors, and researchers.
             </p>
-            <FollowInstagram variant="footer" className="mt-4" />
+            <SocialLinks variant="footer" className="mt-4 justify-center md:justify-start" />
           </div>
           <div className="flex flex-wrap justify-center gap-6 text-sm text-white/70">
             <button type="button" onClick={() => scrollToSection('features')} className="hover:text-white transition-colors">

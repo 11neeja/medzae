@@ -27,12 +27,20 @@ export const SITE_DESCRIPTION =
 export const CONTACT_EMAIL = 'contact@medzae.com'
 export const GITHUB_URL = 'https://github.com/11neeja/medihub'
 
-// Public social account. Declared once here so the handle, the profile URL,
+// Public social channels. Declared once here so the handle, the profile URL,
 // and the `sameAs` entry below can never drift apart — every follow link in
 // the app (landing contact block, landing footer, signed-in sidebar, email
-// footers) resolves back to these two constants.
+// footers) resolves back to these constants.
 export const INSTAGRAM_HANDLE = 'medzae_web'
 export const INSTAGRAM_URL = `https://www.instagram.com/${INSTAGRAM_HANDLE}/`
+
+// WhatsApp community invite. Unlike the Instagram profile this is an invite
+// token, not a page: admins can revoke and reissue it, which rotates the URL
+// and silently breaks every link pointing at the old one. Keeping it here
+// means a rotation is a one-line change, and it is deliberately kept out of
+// `sameAs` below — that property is for pages that represent the brand, and
+// a group invite is a door, not a profile.
+export const WHATSAPP_COMMUNITY_URL = 'https://chat.whatsapp.com/Jzer5HAAqopLS7WwrLBLYy'
 
 // Query phrases Medzae should surface for. Google ignores the keywords meta
 // tag outright; Bing and some AI crawlers still read it, so it costs nothing
